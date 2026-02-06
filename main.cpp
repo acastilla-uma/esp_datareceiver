@@ -124,9 +124,15 @@ int main(int argc, char *argv[]) {
 
                         // Mostrar progreso cada 10 líneas
                         if (lineCount % 10 == 0) {
-                            std::cout << "Líneas recibidas: " << lineCount 
-                                      << " - Última: " << line.substr(0, 50) 
-                                      << (line.length() > 50 ? "..." : "") << std::endl;
+                            std::cout << "ACC("
+                                << campos[0] << ", "
+                                << campos[1] << ", "
+                                << campos[2] << ")  GYRO("
+                                << campos[3] << ", "
+                                << campos[4] << ", "
+                                << campos[5] << ")  SI("
+                                << campos[6] << ")" << std::endl;
+
                         }
                     }
                     line.clear();
