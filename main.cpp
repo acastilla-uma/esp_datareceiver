@@ -9,10 +9,6 @@
 #include <sys/ioctl.h>
 #include <csignal>
 #include <atomic>
-// Para crear directorio 'data'
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <cerrno>
 
 std::atomic<bool> running(true);
 
@@ -95,27 +91,16 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Crear carpeta 'data' si no existe y archivo CSV dentro
+    // Crear archivo CSV
     std::string filename = generateFileName();
-    const char *dataDir = "data";
-    struct stat st = {0};
-    if (stat(dataDir, &st) == -1) {
-        if (mkdir(dataDir, 0755) != 0) {
-            std::cerr << "Error creando directorio 'data': " << strerror(errno) << std::endl;
-            close(fd);
-            return 1;
-        }
-    }
-
-    std::string filepath = std::string(dataDir) + "/" + filename;
-    std::ofstream csvFile(filepath);
+    std::ofstream csvFile(filename);
     if (!csvFile.is_open()) {
-        std::cerr << "Error creando archivo: " << filepath << std::endl;
+        std::cerr << "Error creando archivo: " << filename << std::endl;
         close(fd);
         return 1;
     }
 
-    std::cout << "Archivo creado: " << filepath << std::endl;
+    std::cout << "Archivo creado: " << filename << std::endl;
     std::cout << "\nRecibiendo datos...\n" << std::endl;
 
     char buffer[1024];
