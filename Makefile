@@ -1,32 +1,17 @@
-# Makefile simple para compilar el receptor ESP32
+.PHONY: all clean run run_auto help
 
-CXX = g++
-CXXFLAGS = -Wall -Wextra -std=c++17 -O2
-SOURCES = main.cpp
-EXECUTABLE = esp32_receiver
-
-all: $(EXECUTABLE)
-
-$(EXECUTABLE): $(SOURCES)
-	$(CXX) $(CXXFLAGS) -o $(EXECUTABLE) $(SOURCES)
-	@echo "✓ Compilación completada: $(EXECUTABLE)"
+all:
+	./build.sh
 
 clean:
-	rm -f $(EXECUTABLE)
-	@echo "✓ Archivos limpios"
+	@if [ -d build ]; then cmake --build build --target clean; else echo "Nada que limpiar"; fi
 
-run: $(EXECUTABLE)
-	./$(EXECUTABLE) /dev/ttyACM0
+run: all
+	./run_auto.sh
 
-run_auto: $(EXECUTABLE)
-	bash run_auto.sh
-
-.PHONY: all clean run run_auto
+run_auto: run
 
 help:
-	@echo "Hacer (make) objetivos disponibles:"
-	@echo "  all        - Compilar el programa"
-	@echo "  clean      - Limpiar archivos compilados"
-	@echo "  run        - Compilar y ejecutar con puerto /dev/ttyACM0"
-	@echo "  run_auto   - Compilar y ejecutar detectando puerto automáticamente"
-	@echo "  help       - Mostrar esta ayuda"
+	@echo "Objetivos disponibles:"
+	@echo "  all/run    - Compilar con CMake y autodetectar el puerto"
+	@echo "  clean      - Limpiar el artefacto de CMake"

@@ -20,7 +20,6 @@ Ninguna dependencia adicional requerida. Solo librerías estándar de C++.
 ```bash
 chmod +x build.sh
 ./build.sh
-cd build
 ```
 
 ### Opción 2: Compilación manual
@@ -30,6 +29,7 @@ mkdir -p build
 cd build
 cmake ..
 make
+cd ..
 ```
 
 ## Uso
@@ -51,17 +51,64 @@ La placa ESP32 generalmente aparecerá como `/dev/ttyACM0` o `/dev/ttyUSB0`.
 
 ### Ejecutar el programa
 
-**Usar puerto por defecto (/dev/ttyACM0):**
+**Autodetectar el puerto (recomendado):**
 
 ```bash
-./esp32_receiver
+./run_auto.sh
 ```
 
 **Usar puerto personalizado:**
 
 ```bash
-./esp32_receiver /dev/ttyUSB0
+./build/esp32_receiver /dev/ttyUSB0
 ```
+
+El receptor busca primero `/dev/serial/by-id/*` (nombre estable) y después
+`/dev/ttyACM*` y `/dev/ttyUSB*`. Si pasan cinco segundos sin datos, muestra una
+advertencia sin cerrar la captura.
+
+## Comprobación física y del firmware
+
+En esta máquina la placa aparece como un conversor CH341 (`1a86:7523`) en
+`/dev/ttyUSB0`. Que aparezca el puerto confirma el enlace USB, pero no confirma
+que el firmware esté enviando datos.
+
+1. Cierra Arduino IDE, PlatformIO, `screen` y cualquier otro monitor serial.
+2. Ejecuta `./run_auto.sh` y pulsa una vez el botón **RESET/EN** de la placa.
+3. Si no aparecen líneas, carga temporalmente este firmware mínimo usando la
+   misma interfaz USB:
+
+   ```cpp
+   void setup() {
+     Serial.begin(115200);
+     delay(1000);
+     Serial.println("PRUEBA_SERIAL_OK");
+   }
+
+   void loop() {
+     Serial.println("1.0;2.0;3.0;4.0;5.0;6.0;0.98");
+     delay(500);
+   }
+   ```
+
+4. Vuelve a ejecutar `./run_auto.sh`. Debe mostrar `PRUEBA_SERIAL_OK` y una
+   muestra cada medio segundo.
+5. Si la prueba mínima funciona, revisa en el firmware real que se ejecute
+   `Serial.begin(115200)`, que las muestras terminen con `Serial.println(...)`
+   (salto de línea) y que ninguna espera de Wi-Fi, sensor o calibración bloquee
+   el `loop()` antes del envío.
+6. Si la prueba mínima tampoco funciona, prueba otro cable USB-C **de datos**,
+   otro puerto USB y confirma que el firmware se cargó en la misma placa/puerto.
+
+Para comprobar permisos en una terminal normal:
+
+```bash
+id
+ls -l /dev/ttyUSB0
+```
+
+El usuario debe tener activo el grupo `dialout`. Si `dialout` figura en
+`/etc/group` pero no en la salida de `id`, cierra sesión y vuelve a entrar.
 
 ### Ejemplo completo
 
@@ -69,33 +116,31 @@ La placa ESP32 generalmente aparecerá como `/dev/ttyACM0` o `/dev/ttyUSB0`.
 # 1. Compilar
 ./build.sh
 
-# 2. Cambiar a directorio de construcción
-cd build
+# 2. Conectar la placa ESP32 por USB-C
 
-# 3. Conectar la placa ESP32 por USB-C
-
-# 4. Ejecutar
-./esp32_receiver /dev/ttyACM0
+# 3. Ejecutar con autodetección
+./run_auto.sh
 
 # Output esperado:
-# === ESP32 Data Receiver - Linux ===
-# Puerto serial: /dev/ttyACM0
-# Velocidad: 115200 baud
-# Presiona Ctrl+C para detener
-# ================================
-# 
-# Archivo creado: datos_20260206_143022.csv
-# 
-# Recibiendo datos...
-# 
-# Líneas recibidas: 10 - Última: 1.23; 4.56; -0.12; 0.45; ...
+# === Receptor de estabilidad ESP32 ===
+# Puerto: /dev/serial/by-id/usb-1a86_USB_Serial-if00-port0
+# Configuración: 115200 baud, 8N1
+# Ctrl+C para detener
+# =====================================
+# Guardando en: datos_20260206_143022.csv
+# Esperando datos...
+# [1] 1.23; 4.56; -0.12; 0.45; ...
 ```
 
 ## Archivos de salida
 
-El programa crea archivos CSV con nombre: `datos_YYYYMMDD_HHMMSS.csv`
+El programa crea capturas de texto delimitado con nombre:
+`datos_YYYYMMDD_HHMMSS.csv`. Copia las líneas seriales sin interpretar sus
+campos; por eso mensajes de arranque o diagnóstico también aparecerán en el
+archivo. El firmware debe emitir un encabezado y muestras consistentes si se
+necesita un CSV estructurado.
 
-Cada archivo contiene:
+En el firmware esperado, cada archivo contiene:
 
 - **Primera línea (encabezado):** Nombres de las columnas del ESP32
 - **Demás líneas:** Datos en formato semicolon-separated (`;`)
@@ -112,7 +157,7 @@ ax; ay; az; gx; gy; gz; roll; pitch; yaw; timeantwifi; usciclo1; usciclo2; uscic
 
 - ✓ Conexión serial a 115200 baud (configurable en código)
 - ✓ Crea archivos CSV automáticamente con timestamp
-- ✓ Muestra progreso cada 10 líneas recibidas
+- ✓ Muestra cada línea recibida en tiempo real
 - ✓ Limpieza correcta al presionar Ctrl+C
 - ✓ Manejo de señales (SIGINT, SIGTERM)
 - ✓ Sin formatos de salida redundantes (elimina \r)
@@ -128,7 +173,7 @@ sudo usermod -a -G dialout $USER
 # Reiniciar sesión o ejecutar: newgrp dialout
 
 # Opción 2: Usar sudo (no recomendado)
-sudo ./esp32_receiver
+sudo ./build/esp32_receiver /dev/ttyUSB0
 ```
 
 ### No se detecta el puerto

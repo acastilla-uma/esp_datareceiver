@@ -1,34 +1,24 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
 # Script de compilación para el receptor de datos ESP32
 
 echo "=== Compilando receptor de datos ESP32 ==="
 echo ""
 
-# Crear directorio de construcción
-if [ ! -d "build" ]; then
-    mkdir build
-    echo "Directorio 'build' creado"
-fi
-
-cd build
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+mkdir -p "$SCRIPT_DIR/build"
+cd "$SCRIPT_DIR/build"
 
 # Generar archivos de compilación
 echo "Generando archivos CMake..."
-cmake ..
+cmake "$SCRIPT_DIR"
 
 # Compilar
 echo "Compilando..."
-make
+cmake --build . -- -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)"
 
-if [ $? -eq 0 ]; then
-    echo ""
-    echo "✓ Compilación exitosa"
-    echo "Ejecutable: ./esp32_receiver"
-    echo ""
-    echo "Uso: ./esp32_receiver [puerto_serial]"
-    echo "Ej:  ./esp32_receiver /dev/ttyACM0"
-else
-    echo "✗ Error en compilación"
-    exit 1
-fi
+echo ""
+echo "✓ Compilación exitosa"
+echo "Ejecutable: $SCRIPT_DIR/build/esp32_receiver"
+echo "Uso: $SCRIPT_DIR/run_auto.sh"

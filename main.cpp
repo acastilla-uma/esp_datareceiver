@@ -1,159 +1,229 @@
-#include <iostream>
-#include <fstream>
-#include <string>
+#include <atomic>
+#include <cerrno>
+#include <csignal>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
-#include <unistd.h>
 #include <fcntl.h>
+#include <fstream>
+#include <glob.h>
+#include <iostream>
+#include <poll.h>
+#include <set>
+#include <string>
 #include <termios.h>
-#include <sys/ioctl.h>
-#include <csignal>
-#include <atomic>
+#include <unistd.h>
+#include <vector>
 
-std::atomic<bool> running(true);
+namespace {
 
-// Manejador para Ctrl+C
-void signalHandler(int signum) {
-    std::cout << "\n\nIniando cierre...\n";
+std::atomic<bool> running{true};
+
+void signalHandler(int) {
     running = false;
 }
 
-// Configurar puerto serial
-int setupSerial(const char *portname) {
-    int fd = open(portname, O_RDWR | O_NOCTTY | O_SYNC);
+std::vector<std::string> globPaths(const char* pattern) {
+    glob_t matches{};
+    std::vector<std::string> paths;
+    if (glob(pattern, 0, nullptr, &matches) == 0) {
+        for (std::size_t i = 0; i < matches.gl_pathc; ++i) {
+            paths.emplace_back(matches.gl_pathv[i]);
+        }
+    }
+    globfree(&matches);
+    return paths;
+}
+
+std::vector<std::string> findSerialPorts() {
+    std::vector<std::string> ports;
+    std::set<std::string> devices;
+    for (const char* pattern : {"/dev/serial/by-id/*", "/dev/ttyACM*", "/dev/ttyUSB*"}) {
+        for (const auto& path : globPaths(pattern)) {
+            char* resolved = realpath(path.c_str(), nullptr);
+            const std::string device = resolved ? resolved : path;
+            std::free(resolved);
+            if (devices.insert(device).second) {
+                ports.push_back(path);
+            }
+        }
+    }
+    return ports;
+}
+
+int setupSerial(const std::string& portname) {
+    const int fd = open(portname.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
     if (fd < 0) {
-        std::cerr << "Error abriendo puerto " << portname << ": " << strerror(errno) << std::endl;
+        std::cerr << "Error abriendo " << portname << ": " << std::strerror(errno) << '\n';
+        if (errno == EACCES) {
+            std::cerr << "Comprueba que tu sesión pertenece al grupo dialout.\n";
+        }
         return -1;
     }
 
-    struct termios tty;
+    termios tty{};
     if (tcgetattr(fd, &tty) != 0) {
-        std::cerr << "Error obteniendo atributos del puerto\n";
+        std::cerr << "Error leyendo la configuración serial: " << std::strerror(errno) << '\n';
         close(fd);
         return -1;
     }
 
-    // Configurar 115200 baud, 8N1
+    cfmakeraw(&tty);
     cfsetospeed(&tty, B115200);
     cfsetispeed(&tty, B115200);
-
-    tty.c_cflag = (tty.c_cflag & ~CSIZE) | CS8;     // 8 bits
-    tty.c_iflag &= ~IGNBRK;
-    tty.c_lflag = 0;
-    tty.c_oflag = 0;
+    tty.c_cflag = (tty.c_cflag & ~CSIZE) | CS8;
+    tty.c_cflag |= CLOCAL | CREAD;
+    tty.c_cflag &= ~(PARENB | CSTOPB | CRTSCTS);
     tty.c_cc[VMIN] = 0;
-    tty.c_cc[VTIME] = 5;
-
-    tty.c_iflag &= ~(IXON | IXOFF | IXANY);
-    tty.c_cflag |= (CLOCAL | CREAD);
-    tty.c_cflag &= ~(PARENB | PARODD);
-    tty.c_cflag &= ~CSTOPB;
-    tty.c_cflag &= ~CRTSCTS;
+    tty.c_cc[VTIME] = 0;
 
     if (tcsetattr(fd, TCSANOW, &tty) != 0) {
-        std::cerr << "Error configurando puerto\n";
+        std::cerr << "Error configurando el puerto: " << std::strerror(errno) << '\n';
         close(fd);
         return -1;
     }
-
+    tcflush(fd, TCIFLUSH);
     return fd;
 }
 
-// Generador de nombre de archivo con timestamp
 std::string generateFileName() {
-    time_t now = time(nullptr);
-    struct tm *tm_info = localtime(&now);
-    char filename[256];
-    strftime(filename, sizeof(filename), "datos_%Y%m%d_%H%M%S.csv", tm_info);
-    return std::string(filename);
+    const std::time_t now = std::time(nullptr);
+    const std::tm* local = std::localtime(&now);
+    char filename[64];
+    std::strftime(filename, sizeof(filename), "datos_%Y%m%d_%H%M%S.csv", local);
+    return filename;
 }
 
-int main(int argc, char *argv[]) {
-    signal(SIGINT, signalHandler);
-    signal(SIGTERM, signalHandler);
+void printDetectedPorts(const std::vector<std::string>& ports) {
+    if (ports.empty()) {
+        std::cerr << "No se encontró ningún /dev/ttyACM*, /dev/ttyUSB* ni /dev/serial/by-id/*.\n"
+                  << "Comprueba el cable USB-C (debe transmitir datos), alimentación y el driver USB.\n";
+        return;
+    }
+    std::cerr << "Puertos detectados:\n";
+    for (const auto& port : ports) {
+        std::cerr << "  " << port << '\n';
+    }
+}
 
-    // Argumentos por defecto
-    const char *portname = "/dev/ttyACM0";
-    if (argc > 1) {
+}  // namespace
+
+int main(int argc, char* argv[]) {
+    std::signal(SIGINT, signalHandler);
+    std::signal(SIGTERM, signalHandler);
+
+    const auto ports = findSerialPorts();
+    std::string portname;
+    int fd = -1;
+    if (argc > 1 && std::string(argv[1]) != "auto") {
         portname = argv[1];
+        fd = setupSerial(portname);
+    } else {
+        for (const auto& candidate : ports) {
+            fd = setupSerial(candidate);
+            if (fd >= 0) {
+                portname = candidate;
+                break;
+            }
+        }
     }
 
-    std::cout << "=== ESP32 Data Receiver - Linux ===" << std::endl;
-    std::cout << "Puerto serial: " << portname << std::endl;
-    std::cout << "Velocidad: 115200 baud" << std::endl;
-    std::cout << "Presiona Ctrl+C para detener" << std::endl;
-    std::cout << "================================\n" << std::endl;
-
-    // Configurar puerto serial
-    int fd = setupSerial(portname);
     if (fd < 0) {
-        std::cerr << "No se pudo configurar el puerto serial\n";
+        printDetectedPorts(ports);
         return 1;
     }
 
-    // Crear archivo CSV
-    std::string filename = generateFileName();
+    std::cout << "=== Receptor de estabilidad ESP32 ===\n"
+              << "Puerto: " << portname << "\n"
+              << "Configuración: 115200 baud, 8N1\n"
+              << "Ctrl+C para detener\n"
+              << "=====================================\n";
+
+    const std::string filename = generateFileName();
     std::ofstream csvFile(filename);
-    if (!csvFile.is_open()) {
-        std::cerr << "Error creando archivo: " << filename << std::endl;
+    if (!csvFile) {
+        std::cerr << "No se pudo crear " << filename << ": " << std::strerror(errno) << '\n';
         close(fd);
         return 1;
     }
 
-    std::cout << "Archivo creado: " << filename << std::endl;
-    std::cout << "\nRecibiendo datos...\n" << std::endl;
+    std::cout << "Guardando en: " << filename << "\nEsperando datos...\n";
 
+    pollfd serialPoll{fd, POLLIN, 0};
     char buffer[1024];
     std::string line;
+    bool discardingOversizedLine = false;
     unsigned long lineCount = 0;
-    bool headerWritten = false;
+    unsigned int idleSeconds = 0;
+    bool failed = false;
 
     while (running) {
-        int n = read(fd, buffer, sizeof(buffer));
-        
-        if (n > 0) {
-            for (int i = 0; i < n; i++) {
-                char c = buffer[i];
-                
-                if (c == '\n') {
-                    if (!line.empty()) {
-                        // Escribir línea en CSV
-                        csvFile << line << std::endl;
-                        csvFile.flush();
-                        lineCount++;
+        const int pollResult = poll(&serialPoll, 1, 1000);
+        if (pollResult < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            std::cerr << "Error esperando datos: " << std::strerror(errno) << '\n';
+            failed = true;
+            break;
+        }
+        if (pollResult == 0) {
+            ++idleSeconds;
+            if (idleSeconds == 5 || idleSeconds % 15 == 0) {
+                std::cerr << "Sin datos durante " << idleSeconds
+                          << " s. Pulsa RESET/EN y verifica Serial.begin(115200).\n";
+            }
+            continue;
+        }
+        if (serialPoll.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+            std::cerr << "El puerto serial se desconectó o dejó de estar disponible.\n";
+            failed = true;
+            break;
+        }
 
-                        // Mostrar progreso cada 10 líneas
-                        if (lineCount % 10 == 0) {
-                            std::cout << "ACC("
-                                << campos[0] << ", "
-                                << campos[1] << ", "
-                                << campos[2] << ")  GYRO("
-                                << campos[3] << ", "
-                                << campos[4] << ", "
-                                << campos[5] << ")  SI("
-                                << campos[6] << ")" << std::endl;
-
-                        }
+        const ssize_t count = read(fd, buffer, sizeof(buffer));
+        if (count < 0) {
+            if (errno == EAGAIN || errno == EINTR) {
+                continue;
+            }
+            std::cerr << "Error leyendo datos: " << std::strerror(errno) << '\n';
+            failed = true;
+            break;
+        }
+        idleSeconds = 0;
+        for (ssize_t i = 0; i < count; ++i) {
+            const char c = buffer[i];
+            if (c == '\n') {
+                if (discardingOversizedLine) {
+                    discardingOversizedLine = false;
+                } else if (!line.empty()) {
+                    csvFile << line << '\n';
+                    csvFile.flush();
+                    if (!csvFile) {
+                        std::cerr << "Error escribiendo el archivo CSV.\n";
+                        failed = true;
+                        running = false;
+                        break;
                     }
-                    line.clear();
-                } else if (c != '\r' && c >= 32 && c <= 126) {
+                    std::cout << '[' << ++lineCount << "] " << line << '\n';
+                }
+                line.clear();
+            } else if (c != '\r') {
+                if (line.size() < 65536) {
                     line += c;
+                } else if (!discardingOversizedLine) {
+                    std::cerr << "Línea serial mayor de 64 KiB; se descarta hasta el próximo salto de línea.\n";
+                    discardingOversizedLine = true;
+                    line.clear();
                 }
             }
-        } else {
-            // Pequeña pausa para no consumir CPU
-            usleep(10000);
         }
     }
 
-    // Cerrar archivos
-    csvFile.close();
+    if (!line.empty()) {
+        csvFile << line << '\n';
+    }
     close(fd);
-
-    std::cout << "\n=== Cierre de sesión ===" << std::endl;
-    std::cout << "Total de líneas recibidas: " << lineCount << std::endl;
-    std::cout << "Archivo guardado: " << filename << std::endl;
-    std::cout << "Puerto serial cerrado" << std::endl;
-
-    return 0;
+    std::cout << "\nSesión finalizada. Líneas: " << lineCount << ", archivo: " << filename << '\n';
+    return failed ? 1 : 0;
 }

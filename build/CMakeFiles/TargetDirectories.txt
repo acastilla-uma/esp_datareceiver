@@ -1,0 +1,7 @@
+/home/agilex/Documents/esp_datareceiver/build/CMakeFiles/install/strip.dir
+/home/agilex/Documents/esp_datareceiver/build/CMakeFiles/edit_cache.dir
+/home/agilex/Documents/esp_datareceiver/build/CMakeFiles/esp32_receiver.dir
+/home/agilex/Documents/esp_datareceiver/build/CMakeFiles/rebuild_cache.dir
+/home/agilex/Documents/esp_datareceiver/build/CMakeFiles/list_install_components.dir
+/home/agilex/Documents/esp_datareceiver/build/CMakeFiles/install/local.dir
+/home/agilex/Documents/esp_datareceiver/build/CMakeFiles/install.dir

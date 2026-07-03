@@ -1,0 +1,1 @@
+/usr/bin/c++     CMakeFiles/esp32_receiver.dir/main.cpp.o  -o esp32_receiver 
