@@ -3,9 +3,7 @@
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
-#include <ctime>
 #include <fcntl.h>
-#include <fstream>
 #include <glob.h>
 #include <iostream>
 #include <poll.h>
@@ -86,14 +84,6 @@ int setupSerial(const std::string& portname) {
     return fd;
 }
 
-std::string generateFileName() {
-    const std::time_t now = std::time(nullptr);
-    const std::tm* local = std::localtime(&now);
-    char filename[64];
-    std::strftime(filename, sizeof(filename), "datos_%Y%m%d_%H%M%S.csv", local);
-    return filename;
-}
-
 void printDetectedPorts(const std::vector<std::string>& ports) {
     if (ports.empty()) {
         std::cerr << "No se encontró ningún /dev/ttyACM*, /dev/ttyUSB* ni /dev/serial/by-id/*.\n"
@@ -139,21 +129,14 @@ int main(int argc, char* argv[]) {
               << "Ctrl+C para detener\n"
               << "=====================================\n";
 
-    const std::string filename = generateFileName();
-    std::ofstream csvFile(filename);
-    if (!csvFile) {
-        std::cerr << "No se pudo crear " << filename << ": " << std::strerror(errno) << '\n';
-        close(fd);
-        return 1;
-    }
-
-    std::cout << "Guardando en: " << filename << "\nEsperando datos...\n";
+    std::cout << "Mostrando datos en pantalla; no se crearán archivos CSV.\n"
+              << "Esperando datos...\n";
 
     pollfd serialPoll{fd, POLLIN, 0};
     char buffer[1024];
     std::string line;
     // El puerto puede abrirse en mitad de una trama. Descartar hasta el primer
-    // salto de línea evita guardar un registro inicial parcial o residual.
+    // salto de línea evita mostrar un registro inicial parcial o residual.
     bool discardingPartialLine = true;
     bool discardingOversizedLine = false;
     unsigned long lineCount = 0;
@@ -202,14 +185,6 @@ int main(int argc, char* argv[]) {
                 } else if (discardingOversizedLine) {
                     discardingOversizedLine = false;
                 } else if (!line.empty()) {
-                    csvFile << line << '\n';
-                    csvFile.flush();
-                    if (!csvFile) {
-                        std::cerr << "Error escribiendo el archivo CSV.\n";
-                        failed = true;
-                        running = false;
-                        break;
-                    }
                     std::cout << '[' << ++lineCount << "] " << line << '\n';
                 }
                 line.clear();
@@ -225,10 +200,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    if (!line.empty()) {
-        csvFile << line << '\n';
-    }
     close(fd);
-    std::cout << "\nSesión finalizada. Líneas: " << lineCount << ", archivo: " << filename << '\n';
+    std::cout << "\nSesión finalizada. Líneas mostradas: " << lineCount << '\n';
     return failed ? 1 : 0;
 }

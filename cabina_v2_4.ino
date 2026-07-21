@@ -507,8 +507,8 @@ float d1;
 float coeff;
 float alpha;
 float alphav;
-float s = 1100;  // semivia mm
-float h = 1300;  // altura centro de gravedad mm
+float s = 470.0f;  // ancho de vía completo del AGV, mm
+float h = 250.0f;  // altura del centro de gravedad del AGV, mm
 float phi1;
 float phi1crit;
 float phi1F;      //F significa frontal
@@ -1157,7 +1157,7 @@ void Task1(void *pvParameters) {  //fisica
   float diag = 0;
   float k1 = 1.15;
   float k2 = 2.05;
-  float k3 = 1;
+  float k3 = 0.75f;
   float k4 = 1100;
   int asonora = 5;
 
@@ -1403,7 +1403,7 @@ void Task1(void *pvParameters) {  //fisica
 
   k1 = preferences.getFloat("1", 1.15);
   k2 = preferences.getFloat("2", 2.05);
-  k3 = preferences.getFloat("3", .99);
+  k3 = preferences.getFloat("3", 0.75f);
   k4 = preferences.getFloat("4", 1100);
   asonora = preferences.getInt("5", 5);
   anular = anular = preferences.getInt("6", 0);
@@ -1411,11 +1411,11 @@ void Task1(void *pvParameters) {  //fisica
   preferences.end();
 
   preferences.begin("fisica", true);
-  d1 = preferences.getFloat("d1", 4.2);
-  coeff = preferences.getFloat("coeff", 7.14);
-  alpha = preferences.getFloat("alpha", 60);
-  alphav = preferences.getFloat("alphav", 64);
-  s = preferences.getFloat("s", 1100);
+  d1 = preferences.getFloat("d1", 0.34311077f);
+  coeff = preferences.getFloat("coeff", 54.8466f);
+  alpha = preferences.getFloat("alpha", 46.77157f);
+  alphav = preferences.getFloat("alphav", 49.77157f);  // Estimación: Alfa + 3°; el Excel indica +2° a +4°
+  s = preferences.getFloat("s", 470.0f);
   preferences.end();
 
   preferences.begin("idioma", true);

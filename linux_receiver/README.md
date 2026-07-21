@@ -1,6 +1,6 @@
 # ESP32 Data Receiver - Linux
 
-Programa en C++ que recibe datos continuamente desde la placa ESP32 (cabina_v2_4) por puerto USB-C y los guarda en archivos CSV.
+Programa en C++ que recibe datos continuamente desde la placa ESP32 (cabina_v2_4) por puerto USB-C y los muestra en la terminal. No crea archivos CSV.
 
 ## Requisitos
 
@@ -127,20 +127,17 @@ El usuario debe tener activo el grupo `dialout`. Si `dialout` figura en
 # Configuración: 115200 baud, 8N1
 # Ctrl+C para detener
 # =====================================
-# Guardando en: datos_20260206_143022.csv
+# Mostrando datos en pantalla; no se crearán archivos CSV.
 # Esperando datos...
 # [1] 1.23; 4.56; -0.12; 0.45; ...
 ```
 
 ## Archivos de salida
 
-El programa crea capturas de texto delimitado con nombre:
-`datos_YYYYMMDD_HHMMSS.csv`. Copia las líneas seriales sin interpretar sus
-campos; por eso mensajes de arranque o diagnóstico también aparecerán en el
-archivo. El firmware debe emitir un encabezado y muestras consistentes si se
-necesita un CSV estructurado.
+El programa no crea archivos ni guarda datos al detenerse. Cada línea serial
+completa se muestra en pantalla y cualquier línea parcial se descarta al cerrar.
 
-En el firmware esperado, cada archivo contiene:
+El firmware esperado envía líneas de texto con este formato:
 
 - **Primera línea (encabezado):** Nombres de las columnas del ESP32
 - **Demás líneas:** Datos en formato semicolon-separated (`;`)
@@ -156,7 +153,7 @@ ax; ay; az; gx; gy; gz; roll; pitch; yaw; timeantwifi; usciclo1; usciclo2; uscic
 ## Características
 
 - ✓ Conexión serial a 115200 baud (configurable en código)
-- ✓ Crea archivos CSV automáticamente con timestamp
+- ✓ Muestra datos en tiempo real sin guardar archivos CSV
 - ✓ Muestra cada línea recibida en tiempo real
 - ✓ Limpieza correcta al presionar Ctrl+C
 - ✓ Manejo de señales (SIGINT, SIGTERM)
