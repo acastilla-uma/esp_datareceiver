@@ -152,6 +152,9 @@ int main(int argc, char* argv[]) {
     pollfd serialPoll{fd, POLLIN, 0};
     char buffer[1024];
     std::string line;
+    // El puerto puede abrirse en mitad de una trama. Descartar hasta el primer
+    // salto de línea evita guardar un registro inicial parcial o residual.
+    bool discardingPartialLine = true;
     bool discardingOversizedLine = false;
     unsigned long lineCount = 0;
     unsigned int idleSeconds = 0;
@@ -194,7 +197,9 @@ int main(int argc, char* argv[]) {
         for (ssize_t i = 0; i < count; ++i) {
             const char c = buffer[i];
             if (c == '\n') {
-                if (discardingOversizedLine) {
+                if (discardingPartialLine) {
+                    discardingPartialLine = false;
+                } else if (discardingOversizedLine) {
                     discardingOversizedLine = false;
                 } else if (!line.empty()) {
                     csvFile << line << '\n';
