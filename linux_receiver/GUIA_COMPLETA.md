@@ -76,24 +76,27 @@ Puerto indicado manualmente:
 Salida esperada:
 
 ```text
-=== Receptor de estabilidad ESP32 ===
-Puerto: /dev/ttyUSB0
-Configuración: 115200 baud, 8N1
-Ctrl+C para detener
-=====================================
-Mostrando datos en pantalla; no se crearán archivos CSV.
-Esperando datos...
-[1] ax; ay; az; gx; gy; gz; ...
-[2] 1.23; 4.56; -0.12; 0.45; ...
+ESP32 · MONITOR DE ESTABILIDAD
+Estado: ● RECIBIENDO DATOS
+Puerto: /dev/ttyUSB0 · 115200 baud
+Muestra: 2 · Actualizada: 12:34:56
+
+MEDICIÓN ACTUAL
+Aceleración X [ax]  1.23
+Aceleración Y [ay]  4.56
+...
 ```
+
+El panel se actualiza en el mismo lugar: solo permanece visible la medición más
+reciente. El número de columnas se adapta al ancho de la terminal.
 
 ## Detener el monitor
 
 Pulsa `Ctrl+C`. El receptor cierra el puerto serial y muestra el total de
-líneas vistas. No guarda un archivo al cerrar ni durante la ejecución.
+muestras recibidas. No guarda un archivo al cerrar ni durante la ejecución.
 
 ```text
-Sesión finalizada. Líneas mostradas: 125
+Sesión finalizada. Muestras recibidas: 125
 ```
 
 ## Comprobación del firmware

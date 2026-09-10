@@ -121,21 +121,14 @@ El usuario debe tener activo el grupo `dialout`. Si `dialout` figura en
 # 3. Ejecutar con autodetección
 ./run_auto.sh
 
-# Output esperado:
-# === Receptor de estabilidad ESP32 ===
-# Puerto: /dev/serial/by-id/usb-1a86_USB_Serial-if00-port0
-# Configuración: 115200 baud, 8N1
-# Ctrl+C para detener
-# =====================================
-# Mostrando datos en pantalla; no se crearán archivos CSV.
-# Esperando datos...
-# [1] 1.23; 4.56; -0.12; 0.45; ...
+# Se abre un panel con el estado de conexión y la medición más reciente.
 ```
 
 ## Archivos de salida
 
-El programa no crea archivos ni guarda datos al detenerse. Cada línea serial
-completa se muestra en pantalla y cualquier línea parcial se descarta al cerrar.
+El programa no crea archivos ni guarda datos al detenerse. El panel reemplaza
+la medición anterior con la más reciente, identifica cada valor por su nombre e
+ignora los mensajes de diagnóstico del arranque del ESP32.
 
 El firmware esperado envía líneas de texto con este formato:
 
@@ -154,7 +147,9 @@ ax; ay; az; gx; gy; gz; roll; pitch; yaw; timeantwifi; usciclo1; usciclo2; uscic
 
 - ✓ Conexión serial a 115200 baud (configurable en código)
 - ✓ Muestra datos en tiempo real sin guardar archivos CSV
-- ✓ Muestra cada línea recibida en tiempo real
+- ✓ Panel de terminal con una única medición actual y nombres de campos
+- ✓ Diseño adaptable a una, dos o tres columnas según el ancho de la terminal
+- ✓ Filtra los mensajes de arranque que no son mediciones
 - ✓ Limpieza correcta al presionar Ctrl+C
 - ✓ Manejo de señales (SIGINT, SIGTERM)
 - ✓ Sin formatos de salida redundantes (elimina \r)

@@ -1,25 +1,236 @@
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <cctype>
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <fcntl.h>
 #include <glob.h>
+#include <iomanip>
 #include <iostream>
 #include <poll.h>
 #include <set>
 #include <string>
+#include <sys/ioctl.h>
 #include <termios.h>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 
 namespace {
 
 std::atomic<bool> running{true};
 
+const std::vector<std::string> DEFAULT_FIELDS{
+    "ax", "ay", "az", "gx", "gy", "gz", "roll", "pitch", "yaw",
+    "timeantwifi", "usciclo1", "usciclo2", "usciclo3", "usciclo4",
+    "usciclo5", "si", "accmag", "microsds", "k3"
+};
+
 void signalHandler(int) {
     running = false;
 }
+
+std::string trim(const std::string& text) {
+    const auto first = std::find_if_not(text.begin(), text.end(), [](unsigned char c) {
+        return std::isspace(c);
+    });
+    const auto last = std::find_if_not(text.rbegin(), text.rend(), [](unsigned char c) {
+        return std::isspace(c);
+    }).base();
+    return first < last ? std::string(first, last) : std::string{};
+}
+
+std::vector<std::string> splitFields(const std::string& line) {
+    std::vector<std::string> fields;
+    std::size_t start = 0;
+    while (start <= line.size()) {
+        const std::size_t separator = line.find(';', start);
+        fields.push_back(trim(line.substr(start, separator - start)));
+        if (separator == std::string::npos) {
+            break;
+        }
+        start = separator + 1;
+    }
+    while (!fields.empty() && fields.back().empty()) {
+        fields.pop_back();
+    }
+    return fields;
+}
+
+std::string lowercase(std::string text) {
+    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return text;
+}
+
+bool isMeasurementHeader(const std::vector<std::string>& fields) {
+    return fields.size() >= 3 && lowercase(fields[0]) == "ax" &&
+           lowercase(fields[1]) == "ay" && lowercase(fields[2]) == "az";
+}
+
+bool isNumber(const std::string& value) {
+    if (value.empty()) {
+        return false;
+    }
+    char* end = nullptr;
+    std::strtod(value.c_str(), &end);
+    return end != value.c_str() && *end == '\0';
+}
+
+bool isMeasurement(const std::vector<std::string>& values,
+                   const std::vector<std::string>& fields) {
+    return values.size() == fields.size() &&
+           std::all_of(values.begin(), values.end(), isNumber);
+}
+
+std::string friendlyFieldName(const std::string& field) {
+    const std::string key = lowercase(trim(field));
+    if (key == "ax") return "Aceleración X [ax]";
+    if (key == "ay") return "Aceleración Y [ay]";
+    if (key == "az") return "Aceleración Z [az]";
+    if (key == "gx") return "Giro X [gx]";
+    if (key == "gy") return "Giro Y [gy]";
+    if (key == "gz") return "Giro Z [gz]";
+    if (key == "roll") return "Inclinación lateral [roll]";
+    if (key == "pitch") return "Inclinación frontal [pitch]";
+    if (key == "yaw") return "Orientación [yaw]";
+    if (key == "timeantwifi") return "Tiempo desde WiFi";
+    if (key == "usciclo1") return "Tiempo de ciclo 1";
+    if (key == "usciclo2") return "Tiempo de ciclo 2";
+    if (key == "usciclo3") return "Tiempo de ciclo 3";
+    if (key == "usciclo4") return "Tiempo de ciclo 4";
+    if (key == "usciclo5") return "Tiempo de ciclo 5";
+    if (key == "si") return "Índice de estabilidad [si]";
+    if (key == "accmag") return "Magnitud de aceleración";
+    if (key == "microsds") return "Tiempo de escritura SD";
+    if (key == "k3") return "Factor K3";
+    return field;
+}
+
+std::string currentTime() {
+    const std::time_t now = std::time(nullptr);
+    std::tm localTime{};
+    localtime_r(&now, &localTime);
+    char formatted[16];
+    std::strftime(formatted, sizeof(formatted), "%H:%M:%S", &localTime);
+    return formatted;
+}
+
+std::string shorten(const std::string& text, std::size_t width) {
+    if (text.size() <= width) {
+        return text;
+    }
+    if (width <= 3) {
+        return text.substr(0, width);
+    }
+    return text.substr(0, width - 3) + "...";
+}
+
+class Dashboard {
+public:
+    explicit Dashboard(std::string port)
+        : port_(std::move(port)), interactive_(isatty(STDOUT_FILENO)) {
+        if (interactive_) {
+            std::cout << "\033[?25l";
+        }
+    }
+
+    ~Dashboard() {
+        finish();
+    }
+
+    void render(const std::vector<std::string>& fields,
+                const std::vector<std::string>& values,
+                unsigned long sampleCount,
+                unsigned int idleSeconds,
+                const std::string& updatedAt) const {
+        if (!interactive_) {
+            if (!values.empty()) {
+                std::cout << "[Muestra " << sampleCount << "] ";
+                for (std::size_t i = 0; i < values.size(); ++i) {
+                    if (i != 0) std::cout << " | ";
+                    std::cout << fields[i] << '=' << values[i];
+                }
+                std::cout << '\n';
+            }
+            return;
+        }
+
+        const int width = terminalWidth();
+        const int columns = width >= 108 ? 3 : (width >= 72 ? 2 : 1);
+        const int columnWidth = std::max(30, (width - (columns - 1) * 3) / columns);
+        const int separatorWidth = std::max(38, std::min(width, 140));
+
+        std::cout << "\033[H\033[J"
+                  << "\033[1;36m  ESP32 · MONITOR DE ESTABILIDAD\033[0m\n"
+                  << "\033[2m" << std::string(separatorWidth, '-') << "\033[0m\n";
+
+        if (values.empty()) {
+            std::cout << "  Estado: \033[1;33m● ESPERANDO LA PRIMERA MEDICIÓN\033[0m\n";
+        } else if (idleSeconds == 0) {
+            std::cout << "  Estado: \033[1;32m● RECIBIENDO DATOS\033[0m\n";
+        } else {
+            std::cout << "  Estado: \033[1;33m● ÚLTIMO DATO HACE " << idleSeconds
+                      << " s\033[0m\n";
+        }
+        std::cout << "  Puerto: \033[1m" << port_ << "\033[0m  ·  115200 baud\n"
+                  << "  Muestra: \033[1m" << sampleCount << "\033[0m  ·  Actualizada: \033[1m"
+                  << updatedAt << "\033[0m\n\n"
+                  << "  \033[1;37mMEDICIÓN ACTUAL\033[0m\n"
+                  << "\033[2m" << std::string(separatorWidth, '-') << "\033[0m\n";
+
+        for (std::size_t row = 0; row * columns < fields.size(); ++row) {
+            for (int column = 0; column < columns; ++column) {
+                const std::size_t index = row * columns + column;
+                if (index >= fields.size()) break;
+                if (column != 0) std::cout << " │ ";
+                renderCell(friendlyFieldName(fields[index]),
+                           index < values.size() ? values[index] : "—",
+                           columnWidth);
+            }
+            std::cout << '\n';
+        }
+
+        std::cout << "\033[2m" << std::string(separatorWidth, '-') << "\033[0m\n"
+                  << "  \033[2mCtrl+C para salir · Solo se muestra la medición más reciente\033[0m"
+                  << std::flush;
+    }
+
+    void finish() {
+        if (interactive_ && !finished_) {
+            std::cout << "\033[0m\033[?25h\n" << std::flush;
+            finished_ = true;
+        }
+    }
+
+private:
+    int terminalWidth() const {
+        winsize size{};
+        if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0 && size.ws_col > 0) {
+            return std::max(40, static_cast<int>(size.ws_col));
+        }
+        return 100;
+    }
+
+    static void renderCell(const std::string& label,
+                           const std::string& value,
+                           int width) {
+        const int valueWidth = std::min(14, std::max(8, width / 3));
+        const int labelWidth = std::max(8, width - valueWidth - 3);
+        std::cout << "  \033[37m" << std::left << std::setw(labelWidth)
+                  << shorten(label, labelWidth) << "\033[0m "
+                  << "\033[1;36m" << std::right << std::setw(valueWidth)
+                  << shorten(value, valueWidth) << "\033[0m";
+    }
+
+    std::string port_;
+    bool interactive_;
+    bool finished_{false};
+};
 
 std::vector<std::string> globPaths(const char* pattern) {
     glob_t matches{};
@@ -123,15 +334,6 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    std::cout << "=== Receptor de estabilidad ESP32 ===\n"
-              << "Puerto: " << portname << "\n"
-              << "Configuración: 115200 baud, 8N1\n"
-              << "Ctrl+C para detener\n"
-              << "=====================================\n";
-
-    std::cout << "Mostrando datos en pantalla; no se crearán archivos CSV.\n"
-              << "Esperando datos...\n";
-
     pollfd serialPoll{fd, POLLIN, 0};
     char buffer[1024];
     std::string line;
@@ -142,6 +344,11 @@ int main(int argc, char* argv[]) {
     unsigned long lineCount = 0;
     unsigned int idleSeconds = 0;
     bool failed = false;
+    std::vector<std::string> fieldNames = DEFAULT_FIELDS;
+    std::vector<std::string> currentValues;
+    std::string updatedAt = "--:--:--";
+    Dashboard dashboard(portname);
+    dashboard.render(fieldNames, currentValues, lineCount, idleSeconds, updatedAt);
 
     while (running) {
         const int pollResult = poll(&serialPoll, 1, 1000);
@@ -149,19 +356,18 @@ int main(int argc, char* argv[]) {
             if (errno == EINTR) {
                 continue;
             }
+            dashboard.finish();
             std::cerr << "Error esperando datos: " << std::strerror(errno) << '\n';
             failed = true;
             break;
         }
         if (pollResult == 0) {
             ++idleSeconds;
-            if (idleSeconds == 5 || idleSeconds % 15 == 0) {
-                std::cerr << "Sin datos durante " << idleSeconds
-                          << " s. Pulsa RESET/EN y verifica Serial.begin(115200).\n";
-            }
+            dashboard.render(fieldNames, currentValues, lineCount, idleSeconds, updatedAt);
             continue;
         }
         if (serialPoll.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+            dashboard.finish();
             std::cerr << "El puerto serial se desconectó o dejó de estar disponible.\n";
             failed = true;
             break;
@@ -172,6 +378,7 @@ int main(int argc, char* argv[]) {
             if (errno == EAGAIN || errno == EINTR) {
                 continue;
             }
+            dashboard.finish();
             std::cerr << "Error leyendo datos: " << std::strerror(errno) << '\n';
             failed = true;
             break;
@@ -185,14 +392,27 @@ int main(int argc, char* argv[]) {
                 } else if (discardingOversizedLine) {
                     discardingOversizedLine = false;
                 } else if (!line.empty()) {
-                    std::cout << '[' << ++lineCount << "] " << line << '\n';
+                    const auto fields = splitFields(line);
+                    if (isMeasurementHeader(fields)) {
+                        fieldNames = fields;
+                        if (currentValues.size() != fieldNames.size()) {
+                            currentValues.clear();
+                        }
+                        dashboard.render(fieldNames, currentValues, lineCount,
+                                         idleSeconds, updatedAt);
+                    } else if (isMeasurement(fields, fieldNames)) {
+                        currentValues = fields;
+                        updatedAt = currentTime();
+                        ++lineCount;
+                        dashboard.render(fieldNames, currentValues, lineCount,
+                                         idleSeconds, updatedAt);
+                    }
                 }
                 line.clear();
             } else if (c != '\r') {
                 if (line.size() < 65536) {
                     line += c;
                 } else if (!discardingOversizedLine) {
-                    std::cerr << "Línea serial mayor de 64 KiB; se descarta hasta el próximo salto de línea.\n";
                     discardingOversizedLine = true;
                     line.clear();
                 }
@@ -201,6 +421,7 @@ int main(int argc, char* argv[]) {
     }
 
     close(fd);
-    std::cout << "\nSesión finalizada. Líneas mostradas: " << lineCount << '\n';
+    dashboard.finish();
+    std::cout << "Sesión finalizada. Muestras recibidas: " << lineCount << '\n';
     return failed ? 1 : 0;
 }
