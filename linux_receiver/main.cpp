@@ -2,6 +2,7 @@
 #include <atomic>
 #include <cerrno>
 #include <cctype>
+#include <chrono>
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
@@ -10,14 +11,20 @@
 #include <glob.h>
 #include <iomanip>
 #include <iostream>
+#include <optional>
 #include <poll.h>
 #include <set>
+#include <sstream>
+#include <stdexcept>
 #include <string>
 #include <sys/ioctl.h>
 #include <termios.h>
 #include <unistd.h>
 #include <utility>
 #include <vector>
+
+#include "gps_matcher.h"
+#include "gps_process.h"
 
 namespace {
 
@@ -27,6 +34,18 @@ const std::vector<std::string> DEFAULT_FIELDS{
     "ax", "ay", "az", "gx", "gy", "gz", "roll", "pitch", "yaw",
     "timeantwifi", "usciclo1", "usciclo2", "usciclo3", "usciclo4",
     "usciclo5", "si", "accmag", "microsds", "k3"
+};
+
+const std::vector<std::string> GPS_FIELDS{
+    "doback_timestamp_utc", "gps_timestamp_utc", "gps_delta_ms",
+    "latitude", "longitude", "gps_fix_type", "gps_num_sats"
+};
+
+struct Options {
+    std::string serialPort{"auto"};
+    std::string gpsScript{"/home/agilex/Documents/PhDAlex/GPS_CSG/gps_realtime.py"};
+    std::string gpsDevice;
+    std::chrono::milliseconds gpsMaximumDifference{10000};
 };
 
 void signalHandler(int) {
@@ -108,6 +127,13 @@ std::string friendlyFieldName(const std::string& field) {
     if (key == "accmag") return "Magnitud de aceleración";
     if (key == "microsds") return "Tiempo de escritura SD";
     if (key == "k3") return "Factor K3";
+    if (key == "doback_timestamp_utc") return "Timestamp DOBACK [UTC]";
+    if (key == "gps_timestamp_utc") return "Timestamp GPS [UTC]";
+    if (key == "gps_delta_ms") return "Diferencia DOBACK-GPS [ms]";
+    if (key == "latitude") return "Latitud GPS";
+    if (key == "longitude") return "Longitud GPS";
+    if (key == "gps_fix_type") return "Tipo de fix GPS";
+    if (key == "gps_num_sats") return "Satélites GPS";
     return field;
 }
 
@@ -118,6 +144,111 @@ std::string currentTime() {
     char formatted[16];
     std::strftime(formatted, sizeof(formatted), "%H:%M:%S", &localTime);
     return formatted;
+}
+
+void printUsage(const char* program) {
+    std::cout
+        << "Uso: " << program << " [auto|PUERTO] [opciones]\n\n"
+        << "Opciones GPS:\n"
+        << "  --gps-script RUTA       Ruta a GPS_CSG/gps_realtime.py\n"
+        << "  --gps-device ID         Filtra device_id en gps_points\n"
+        << "  --gps-max-delta-ms N    Diferencia temporal máxima (10000 ms)\n"
+        << "  --no-gps                Desactiva GPS aunque el script de arranque lo configure\n"
+        << "  -h, --help              Muestra esta ayuda\n";
+}
+
+std::optional<Options> parseOptions(int argc, char* argv[]) {
+    Options options;
+    bool serialPortSeen = false;
+    for (int index = 1; index < argc; ++index) {
+        const std::string argument = argv[index];
+        if (argument == "-h" || argument == "--help") {
+            printUsage(argv[0]);
+            return std::nullopt;
+        }
+        if (argument == "--no-gps") {
+            options.gpsScript.clear();
+            continue;
+        }
+        if (argument == "--gps-script" || argument == "--gps-device" ||
+            argument == "--gps-max-delta-ms") {
+            if (++index >= argc) {
+                std::cerr << "Falta el valor de " << argument << ".\n";
+                return std::nullopt;
+            }
+            const std::string value = argv[index];
+            if (argument == "--gps-script") {
+                options.gpsScript = value;
+            } else if (argument == "--gps-device") {
+                options.gpsDevice = value;
+            } else {
+                try {
+                    const long long milliseconds = std::stoll(value);
+                    if (milliseconds < 0) {
+                        throw std::out_of_range("negative");
+                    }
+                    options.gpsMaximumDifference =
+                        std::chrono::milliseconds(milliseconds);
+                } catch (const std::exception&) {
+                    std::cerr << "--gps-max-delta-ms debe ser un entero no negativo.\n";
+                    return std::nullopt;
+                }
+            }
+            continue;
+        }
+        if (!argument.empty() && argument[0] == '-') {
+            std::cerr << "Opción desconocida: " << argument << "\n";
+            return std::nullopt;
+        }
+        if (serialPortSeen) {
+            std::cerr << "Solo se puede indicar un puerto serial.\n";
+            return std::nullopt;
+        }
+        options.serialPort = argument;
+        serialPortSeen = true;
+    }
+    return options;
+}
+
+std::vector<std::string> displayFields(const std::vector<std::string>& fields,
+                                       bool gpsEnabled) {
+    std::vector<std::string> result = fields;
+    if (gpsEnabled) {
+        result.insert(result.end(), GPS_FIELDS.begin(), GPS_FIELDS.end());
+    }
+    return result;
+}
+
+std::string decimal(double value, int precision) {
+    std::ostringstream output;
+    output << std::fixed << std::setprecision(precision) << value;
+    return output.str();
+}
+
+std::vector<std::string> displayValues(
+    const std::vector<std::string>& values,
+    const std::optional<std::chrono::system_clock::time_point>& dobackTimestamp,
+    const GpsMatcher& gpsMatcher,
+    std::chrono::milliseconds maximumDifference,
+    bool gpsEnabled) {
+    if (values.empty() || !gpsEnabled || !dobackTimestamp) {
+        return values;
+    }
+
+    std::vector<std::string> result = values;
+    result.push_back(formatUtcTimestamp(*dobackTimestamp));
+    const auto match = gpsMatcher.nearest(*dobackTimestamp, maximumDifference);
+    if (!match) {
+        result.insert(result.end(), {"—", "—", "—", "—", "—", "—"});
+        return result;
+    }
+    result.push_back(match->sample.timestampUtc);
+    result.push_back(std::to_string(match->deltaMilliseconds));
+    result.push_back(decimal(match->sample.latitude, 7));
+    result.push_back(decimal(match->sample.longitude, 7));
+    result.push_back(std::to_string(match->sample.fixType));
+    result.push_back(std::to_string(match->sample.satellites));
+    return result;
 }
 
 std::string shorten(const std::string& text, std::size_t width) {
@@ -313,11 +444,19 @@ int main(int argc, char* argv[]) {
     std::signal(SIGINT, signalHandler);
     std::signal(SIGTERM, signalHandler);
 
+    const auto options = parseOptions(argc, argv);
+    if (!options) {
+        return argc > 1 && (std::string(argv[1]) == "-h" ||
+                            std::string(argv[1]) == "--help")
+                   ? 0
+                   : 1;
+    }
+
     const auto ports = findSerialPorts();
     std::string portname;
     int fd = -1;
-    if (argc > 1 && std::string(argv[1]) != "auto") {
-        portname = argv[1];
+    if (options->serialPort != "auto") {
+        portname = options->serialPort;
         fd = setupSerial(portname);
     } else {
         for (const auto& candidate : ports) {
@@ -334,7 +473,24 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    pollfd serialPoll{fd, POLLIN, 0};
+    GpsProcess gpsProcess;
+    GpsMatcher gpsMatcher;
+    bool gpsEnabled = !options->gpsScript.empty();
+    if (gpsEnabled) {
+        std::string gpsError;
+        if (!gpsProcess.start(options->gpsScript, options->gpsDevice, &gpsError)) {
+            std::cerr << "No se pudo iniciar GPS_CSG: " << gpsError
+                      << ". Continuando solo con DOBACK.\n";
+            gpsEnabled = false;
+        } else {
+            std::cerr << "GPS activo: " << options->gpsScript;
+            if (!options->gpsDevice.empty()) {
+                std::cerr << " --device-id " << options->gpsDevice;
+            }
+            std::cerr << '\n';
+        }
+    }
+
     char buffer[1024];
     std::string line;
     // El puerto puede abrirse en mitad de una trama. Descartar hasta el primer
@@ -346,12 +502,22 @@ int main(int argc, char* argv[]) {
     bool failed = false;
     std::vector<std::string> fieldNames = DEFAULT_FIELDS;
     std::vector<std::string> currentValues;
+    std::vector<std::string> currentDisplayValues;
+    std::optional<std::chrono::system_clock::time_point> currentDobackTimestamp;
     std::string updatedAt = "--:--:--";
     Dashboard dashboard(portname);
-    dashboard.render(fieldNames, currentValues, lineCount, idleSeconds, updatedAt);
+    dashboard.render(displayFields(fieldNames, gpsEnabled), currentDisplayValues,
+                     lineCount, idleSeconds, updatedAt);
 
     while (running) {
-        const int pollResult = poll(&serialPoll, 1, 1000);
+        pollfd polls[2]{{fd, POLLIN, 0}, {-1, POLLIN, 0}};
+        nfds_t pollCount = 1;
+        if (gpsEnabled && gpsProcess.fileDescriptor() >= 0) {
+            polls[1].fd = gpsProcess.fileDescriptor();
+            pollCount = 2;
+        }
+
+        const int pollResult = poll(polls, pollCount, 1000);
         if (pollResult < 0) {
             if (errno == EINTR) {
                 continue;
@@ -363,14 +529,34 @@ int main(int argc, char* argv[]) {
         }
         if (pollResult == 0) {
             ++idleSeconds;
-            dashboard.render(fieldNames, currentValues, lineCount, idleSeconds, updatedAt);
+            currentDisplayValues = displayValues(
+                currentValues, currentDobackTimestamp, gpsMatcher,
+                options->gpsMaximumDifference, gpsEnabled);
+            dashboard.render(displayFields(fieldNames, gpsEnabled),
+                             currentDisplayValues, lineCount, idleSeconds,
+                             updatedAt);
             continue;
         }
-        if (serialPoll.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+
+        if (gpsEnabled && pollCount == 2 && polls[1].revents) {
+            for (const auto& gpsLine : gpsProcess.readLines()) {
+                std::string parseError;
+                gpsMatcher.addJsonLine(gpsLine, &parseError);
+            }
+            if (!gpsProcess.running()) {
+                std::cerr << "El proceso GPS_CSG terminó. Continuando solo con DOBACK.\n";
+                gpsEnabled = false;
+            }
+        }
+
+        if (polls[0].revents & (POLLERR | POLLHUP | POLLNVAL)) {
             dashboard.finish();
             std::cerr << "El puerto serial se desconectó o dejó de estar disponible.\n";
             failed = true;
             break;
+        }
+        if (!(polls[0].revents & POLLIN)) {
+            continue;
         }
 
         const ssize_t count = read(fd, buffer, sizeof(buffer));
@@ -397,14 +583,22 @@ int main(int argc, char* argv[]) {
                         fieldNames = fields;
                         if (currentValues.size() != fieldNames.size()) {
                             currentValues.clear();
+                            currentDisplayValues.clear();
+                            currentDobackTimestamp.reset();
                         }
-                        dashboard.render(fieldNames, currentValues, lineCount,
+                        dashboard.render(displayFields(fieldNames, gpsEnabled),
+                                         currentDisplayValues, lineCount,
                                          idleSeconds, updatedAt);
                     } else if (isMeasurement(fields, fieldNames)) {
                         currentValues = fields;
+                        currentDobackTimestamp = std::chrono::system_clock::now();
+                        currentDisplayValues = displayValues(
+                            currentValues, currentDobackTimestamp, gpsMatcher,
+                            options->gpsMaximumDifference, gpsEnabled);
                         updatedAt = currentTime();
                         ++lineCount;
-                        dashboard.render(fieldNames, currentValues, lineCount,
+                        dashboard.render(displayFields(fieldNames, gpsEnabled),
+                                         currentDisplayValues, lineCount,
                                          idleSeconds, updatedAt);
                     }
                 }

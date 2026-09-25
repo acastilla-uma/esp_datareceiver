@@ -63,6 +63,22 @@ La placa ESP32 generalmente aparecerá como `/dev/ttyACM0` o `/dev/ttyUSB0`.
 ./build/esp32_receiver /dev/ttyUSB0
 ```
 
+El receptor inicia también `../GPS_CSG/gps_realtime.py`, añade a cada muestra
+DOBACK su timestamp UTC de recepción y selecciona la coordenada GPS cuyo campo
+`ts` sea el más cercano. La tolerancia predeterminada es de 10 segundos.
+
+```bash
+# Filtrar un dispositivo GPS y ajustar la tolerancia a 5 segundos
+./build/esp32_receiver auto --gps-device GPSTEST001 --gps-max-delta-ms 5000
+
+# Ejecutar temporalmente sin GPS
+./build/esp32_receiver auto --no-gps
+```
+
+Si `GPS_CSG` está en otra ubicación, usa `--gps-script RUTA`. El panel muestra
+`doback_timestamp_utc`, `gps_timestamp_utc`, la diferencia en milisegundos,
+latitud, longitud, tipo de fix y número de satélites.
+
 El receptor busca primero `/dev/serial/by-id/*` (nombre estable) y después
 `/dev/ttyACM*` y `/dev/ttyUSB*`. Si pasan cinco segundos sin datos, muestra una
 advertencia sin cerrar la captura.
