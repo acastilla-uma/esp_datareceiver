@@ -15,4 +15,4 @@ if [[ ! -x "$EXECUTABLE" ]]; then
 fi
 
 cd "$SCRIPT_DIR"
-exec "$EXECUTABLE" auto
+exec "$EXECUTABLE" auto "$@"

@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DOBACK UDP Dashboard</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <main class="shell">
+    <section class="topbar">
+      <div>
+        <h1>DOBACK UDP Dashboard</h1>
+        <p id="connection">Esperando telemetría UDP...</p>
+      </div>
+      <div class="actions">
+        <input id="measurementName" type="text" placeholder="nombre_medida">
+        <button id="startBtn" type="button">▶ Empezar</button>
+        <button id="stopBtn" type="button">■ Guardar</button>
+        <button id="calibrateBtn" type="button">◎ Calibrar</button>
+      </div>
+    </section>
+
+    <section class="grid three">
+      <article class="metric roll">
+        <span>Roll</span>
+        <strong id="roll">--</strong>
+        <small>grados</small>
+      </article>
+      <article class="metric pitch">
+        <span>Pitch</span>
+        <strong id="pitch">--</strong>
+        <small>grados</small>
+      </article>
+      <article class="metric yaw">
+        <span>Yaw</span>
+        <strong id="yaw">--</strong>
+        <small>grados</small>
+      </article>
+    </section>
+
+    <section class="grid two">
+      <article class="panel">
+        <h2>GPS</h2>
+        <dl id="gpsList"></dl>
+      </article>
+      <article class="panel">
+        <h2>Registro</h2>
+        <dl>
+          <dt>Estado</dt><dd id="recording">Parado</dd>
+          <dt>Muestras</dt><dd id="recordedRows">0</dd>
+          <dt>Último comando</dt><dd id="commandStatus">--</dd>
+        </dl>
+      </article>
+    </section>
+
+    <section class="panel">
+      <h2>Parámetros dinámicos</h2>
+      <form id="configForm" class="config">
+        <label>Peso (kg)<input name="mass_kg" type="number" step="0.001" min="0.001" value="50" required></label>
+        <label>Ancho de vía (m)<input name="track_width_m" type="number" step="0.001" min="0.001" value="0.47" required></label>
+        <label>Altura CG (m)<input name="cg_height_m" type="number" step="0.001" min="0.001" value="0.25" required></label>
+        <label>Inercia alabeo (kg m²)<input name="roll_inertia_kg_m2" type="number" step="0.001" min="0" value="0" required></label>
+        <button type="submit">Enviar configuración</button>
+      </form>
+      <dl id="physicsList" class="physics"></dl>
+    </section>
+
+    <section class="panel">
+      <h2>Medición completa</h2>
+      <div id="measurement" class="table"></div>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

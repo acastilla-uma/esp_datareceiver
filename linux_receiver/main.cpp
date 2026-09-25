@@ -26,6 +26,7 @@
 #include "gps_matcher.h"
 #include "gps_process.h"
 #include "serial_format.h"
+#include "udp_gateway.h"
 
 namespace {
 
@@ -54,6 +55,10 @@ struct Options {
     std::string gpsScript{"/home/agilex/Documents/PhDAlex/GPS_CSG/gps_realtime.py"};
     std::string gpsDevice;
     std::chrono::milliseconds gpsMaximumDifference{10000};
+    bool udpEnabled{true};
+    std::string udpHost{"192.168.8.20"};
+    std::uint16_t udpTelemetryPort{50100};
+    std::uint16_t udpCommandPort{50101};
 };
 
 void signalHandler(int) {
@@ -183,7 +188,24 @@ void printUsage(const char* program) {
         << "  --gps-device ID         Filtra device_id en gps_points\n"
         << "  --gps-max-delta-ms N    Diferencia temporal máxima (10000 ms)\n"
         << "  --no-gps                Desactiva GPS aunque el script de arranque lo configure\n"
+        << "Opciones UDP:\n"
+        << "  --udp-host IP           IP del PC Windows (192.168.8.20)\n"
+        << "  --udp-port N            Puerto de telemetría del PC (50100)\n"
+        << "  --udp-command-port N    Puerto de comandos en Jetson (50101)\n"
+        << "  --no-udp                Desactiva telemetría y comandos UDP\n"
         << "  -h, --help              Muestra esta ayuda\n";
+}
+
+std::optional<std::uint16_t> parsePort(const std::string& text) {
+    try {
+        const long value = std::stol(text);
+        if (value < 1 || value > 65535) {
+            return std::nullopt;
+        }
+        return static_cast<std::uint16_t>(value);
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
 }
 
 std::optional<Options> parseOptions(int argc, char* argv[]) {
@@ -199,8 +221,13 @@ std::optional<Options> parseOptions(int argc, char* argv[]) {
             options.gpsScript.clear();
             continue;
         }
+        if (argument == "--no-udp") {
+            options.udpEnabled = false;
+            continue;
+        }
         if (argument == "--gps-script" || argument == "--gps-device" ||
-            argument == "--gps-max-delta-ms") {
+            argument == "--gps-max-delta-ms" || argument == "--udp-host" ||
+            argument == "--udp-port" || argument == "--udp-command-port") {
             if (++index >= argc) {
                 std::cerr << "Falta el valor de " << argument << ".\n";
                 return std::nullopt;
@@ -210,6 +237,20 @@ std::optional<Options> parseOptions(int argc, char* argv[]) {
                 options.gpsScript = value;
             } else if (argument == "--gps-device") {
                 options.gpsDevice = value;
+            } else if (argument == "--udp-host") {
+                options.udpHost = value;
+            } else if (argument == "--udp-port" ||
+                       argument == "--udp-command-port") {
+                const auto port = parsePort(value);
+                if (!port) {
+                    std::cerr << argument << " debe estar entre 1 y 65535.\n";
+                    return std::nullopt;
+                }
+                if (argument == "--udp-port") {
+                    options.udpTelemetryPort = *port;
+                } else {
+                    options.udpCommandPort = *port;
+                }
             } else {
                 try {
                     const long long milliseconds = std::stoll(value);
@@ -237,6 +278,38 @@ std::optional<Options> parseOptions(int argc, char* argv[]) {
         serialPortSeen = true;
     }
     return options;
+}
+
+std::optional<double> measurementValue(
+    const std::vector<std::string>& fields,
+    const std::vector<std::string>& values,
+    const std::vector<std::string>& candidates) {
+    for (std::size_t index = 0; index < fields.size() && index < values.size();
+         ++index) {
+        const std::string field = lowercase(trim(fields[index]));
+        if (std::find(candidates.begin(), candidates.end(), field) ==
+            candidates.end()) {
+            continue;
+        }
+        char* end = nullptr;
+        const double value = std::strtod(values[index].c_str(), &end);
+        if (end != values[index].c_str() && *end == '\0') {
+            return value;
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<udp_gateway::Orientation> measurementOrientation(
+    const std::vector<std::string>& fields,
+    const std::vector<std::string>& values) {
+    const auto roll = measurementValue(fields, values, {"roll", "roll_deg"});
+    const auto pitch = measurementValue(fields, values, {"pitch", "pitch_deg"});
+    const auto yaw = measurementValue(fields, values, {"yaw", "yaw_deg"});
+    if (!roll || !pitch || !yaw) {
+        return std::nullopt;
+    }
+    return udp_gateway::Orientation{*roll, *pitch, *yaw};
 }
 
 std::vector<std::string> displayFields(const std::vector<std::string>& fields,
@@ -502,6 +575,32 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    udp_gateway::UdpGateway udpGateway({
+        options->udpHost,
+        options->udpTelemetryPort,
+        options->udpCommandPort,
+        "0.0.0.0",
+    });
+    bool udpEnabled = options->udpEnabled;
+    if (udpEnabled) {
+        std::string udpError;
+        if (!udpGateway.open(&udpError)) {
+            std::cerr << "No se pudo iniciar UDP: " << udpError
+                      << ". Continuando solo con la terminal.\n";
+            udpEnabled = false;
+        } else {
+            std::cerr << "UDP activo: telemetría a " << options->udpHost << ':'
+                      << options->udpTelemetryPort << ", comandos en :"
+                      << options->udpCommandPort << ".\n";
+        }
+    }
+
+    udp_gateway::CalibrationState calibration;
+    udp_gateway::PhysicalConfig physicalConfig;
+    udp_gateway::PhysicsDerived physics;
+    bool physicsConfigured = false;
+    std::optional<udp_gateway::Orientation> latestRawOrientation;
+
     GpsProcess gpsProcess;
     GpsMatcher gpsMatcher;
     bool gpsEnabled = !options->gpsScript.empty();
@@ -538,6 +637,35 @@ int main(int argc, char* argv[]) {
     dashboard.render(displayFields(fieldNames, gpsEnabled), currentDisplayValues,
                      lineCount, idleSeconds, updatedAt);
 
+    auto processUdpCommands = [&]() {
+        if (!udpEnabled) {
+            return;
+        }
+        for (const auto& command : udpGateway.pollCommands()) {
+            if (command.type == udp_gateway::CommandType::Calibrate) {
+                if (!latestRawOrientation) {
+                    std::cerr << "Calibración ignorada: todavía no hay orientación DOBACK.\n";
+                    continue;
+                }
+                calibration.capture(*latestRawOrientation);
+                std::cerr << "Calibración aplicada a roll, pitch y yaw.\n";
+            } else if (command.type == udp_gateway::CommandType::Config) {
+                udp_gateway::PhysicsDerived candidate;
+                std::string error;
+                if (!udp_gateway::calculatePhysics(command.config, &candidate,
+                                                   &error)) {
+                    std::cerr << "Configuración física ignorada: " << error << '\n';
+                    continue;
+                }
+                physicalConfig = command.config;
+                physics = candidate;
+                physicsConfigured = true;
+                std::cerr << "Configuración física actualizada desde "
+                          << command.sender_ip << ".\n";
+            }
+        }
+    };
+
     auto processSerialLine = [&](const std::string& completedLine) {
         const auto fields = splitFields(completedLine);
         if (isMeasurementHeader(fields)) {
@@ -563,6 +691,7 @@ int main(int argc, char* argv[]) {
 
         currentValues = fields;
         currentDobackTimestamp = std::chrono::system_clock::now();
+        latestRawOrientation = measurementOrientation(fieldNames, currentValues);
         currentDisplayValues = displayValues(
             currentValues, currentDobackTimestamp, gpsMatcher,
             options->gpsMaximumDifference, gpsEnabled);
@@ -571,14 +700,54 @@ int main(int argc, char* argv[]) {
         dashboard.render(displayFields(fieldNames, gpsEnabled),
                          currentDisplayValues, lineCount, idleSeconds,
                          updatedAt);
+
+        if (udpEnabled && latestRawOrientation) {
+            udp_gateway::TelemetryPacket packet;
+            packet.sequence = lineCount;
+            packet.doback_timestamp_utc =
+                formatUtcTimestamp(*currentDobackTimestamp);
+            for (std::size_t index = 0;
+                 index < fieldNames.size() && index < currentValues.size();
+                 ++index) {
+                packet.measurement.emplace_back(fieldNames[index],
+                                                currentValues[index]);
+            }
+            packet.raw_orientation = *latestRawOrientation;
+            packet.orientation = calibration.apply(*latestRawOrientation);
+            packet.calibration_active = calibration.active;
+            const auto gpsMatch = gpsMatcher.nearest(
+                *currentDobackTimestamp, options->gpsMaximumDifference);
+            if (gpsMatch) {
+                packet.gps.valid = true;
+                packet.gps.gps_timestamp_utc = gpsMatch->sample.timestampUtc;
+                packet.gps.delta_ms = gpsMatch->deltaMilliseconds;
+                packet.gps.latitude = gpsMatch->sample.latitude;
+                packet.gps.longitude = gpsMatch->sample.longitude;
+                packet.gps.fix_type = gpsMatch->sample.fixType;
+                packet.gps.num_sats = gpsMatch->sample.satellites;
+            }
+            packet.config = physicalConfig;
+            packet.physics = physics;
+            packet.physics_configured = physicsConfigured;
+            std::string udpError;
+            if (!udpGateway.sendTelemetry(packet, &udpError) && lineCount == 1) {
+                std::cerr << "No se pudo enviar telemetría UDP: " << udpError
+                          << '\n';
+            }
+        }
     };
 
     while (running) {
-        pollfd polls[2]{{fd, POLLIN, 0}, {-1, POLLIN, 0}};
+        pollfd polls[3]{{fd, POLLIN, 0}, {-1, POLLIN, 0}, {-1, POLLIN, 0}};
         nfds_t pollCount = 1;
-        if (gpsEnabled && gpsProcess.fileDescriptor() >= 0) {
-            polls[1].fd = gpsProcess.fileDescriptor();
-            pollCount = 2;
+        const int gpsFd = gpsEnabled ? gpsProcess.fileDescriptor() : -1;
+        if (gpsFd >= 0) {
+            polls[pollCount++] = {gpsFd, POLLIN, 0};
+        }
+        const int udpCommandFd =
+            udpEnabled ? udpGateway.commandFileDescriptor() : -1;
+        if (udpCommandFd >= 0) {
+            polls[pollCount++] = {udpCommandFd, POLLIN, 0};
         }
 
         const int pollResult = poll(polls, pollCount, 1000);
@@ -602,14 +771,19 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
-        if (gpsEnabled && pollCount == 2 && polls[1].revents) {
-            for (const auto& gpsLine : gpsProcess.readLines()) {
-                std::string parseError;
-                gpsMatcher.addJsonLine(gpsLine, &parseError);
+        for (nfds_t index = 1; index < pollCount; ++index) {
+            if (polls[index].fd == gpsFd && polls[index].revents) {
+                for (const auto& gpsLine : gpsProcess.readLines()) {
+                    std::string parseError;
+                    gpsMatcher.addJsonLine(gpsLine, &parseError);
+                }
+                if (!gpsProcess.running()) {
+                    std::cerr << "El proceso GPS_CSG terminó. Continuando solo con DOBACK.\n";
+                    gpsEnabled = false;
+                }
             }
-            if (!gpsProcess.running()) {
-                std::cerr << "El proceso GPS_CSG terminó. Continuando solo con DOBACK.\n";
-                gpsEnabled = false;
+            if (polls[index].fd == udpCommandFd && polls[index].revents) {
+                processUdpCommands();
             }
         }
 

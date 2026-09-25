@@ -1,2 +1,5 @@
 linux_receiver/Testing/
-
+windows_dashboard/measurements/
+windows_dashboard/__pycache__/
+windows_dashboard/tests/__pycache__/
+*.pyc

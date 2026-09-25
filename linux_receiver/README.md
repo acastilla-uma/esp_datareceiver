@@ -67,6 +67,10 @@ El receptor inicia también `../GPS_CSG/gps_realtime.py`, añade a cada muestra
 DOBACK su timestamp UTC de recepción y selecciona la coordenada GPS cuyo campo
 `ts` sea el más cercano. La tolerancia predeterminada es de 10 segundos.
 
+Además, envía cada muestra por UDP al PC `192.168.8.20:50100` y escucha los
+comandos de calibración/configuración en `50101`. Consulta
+`../SISTEMA_UDP.md` para arrancar el panel de Windows.
+
 ```bash
 # Filtrar un dispositivo GPS y ajustar la tolerancia a 5 segundos
 ./build/esp32_receiver auto --gps-device GPSTEST001 --gps-max-delta-ms 5000
