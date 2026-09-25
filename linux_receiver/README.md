@@ -146,7 +146,7 @@ El programa no crea archivos ni guarda datos al detenerse. El panel reemplaza
 la medición anterior con la más reciente, identifica cada valor por su nombre e
 ignora los mensajes de diagnóstico del arranque del ESP32.
 
-El firmware esperado envía líneas de texto con este formato:
+El firmware nuevo envía líneas de texto con este formato:
 
 - **Primera línea (encabezado):** Nombres de las columnas del ESP32
 - **Demás líneas:** Datos en formato semicolon-separated (`;`)
@@ -154,10 +154,13 @@ El firmware esperado envía líneas de texto con este formato:
 Ejemplo de contenido:
 
 ```
-ax; ay; az; gx; gy; gz; roll; pitch; yaw; timeantwifi; usciclo1; usciclo2; usciclo3; usciclo4; usciclo5; si; accmag; microsds; k3
-1.23; 4.56; -0.12; 0.45; 0.23; -0.56; 2.34; -1.23; 0.00; 123456; 0.12; 0.34; 0.45; 0.56; 0.67; 0.89; 4.56; 1234; 1.15
-2.34; 5.67; -0.23; 0.56; 0.34; -0.67; 2.45; -1.34; 0.11; 234567; 0.23; 0.45; 0.56; 0.67; 0.78; 1.00; 5.67; 2345; 1.15
+timestamp_us; ax_g; ay_g; az_g; gx_deg_s; gy_deg_s; gz_deg_s; roll_deg; pitch_deg; yaw_deg; usciclo1_us; usciclo2_us; usciclo3_us; usciclo4_us; usciclo5_us; si; accmag_g; microsds_us
+1234567; 0.01; -0.02; 1.00; 0.12; -0.05; 0.03; 1.20; -0.40; 0.10; 20000; 20001; 19999; 20000; 20002; 0.89; 1.00025; 850
 ```
+
+También se conserva la detección automática del formato anterior de 19 columnas.
+Si el receptor se conecta después de que el ESP32 haya enviado el encabezado,
+identifica el esquema por el número de valores numéricos.
 
 ## Características
 

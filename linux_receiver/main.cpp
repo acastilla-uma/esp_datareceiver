@@ -25,15 +25,23 @@
 
 #include "gps_matcher.h"
 #include "gps_process.h"
+#include "serial_format.h"
 
 namespace {
 
 std::atomic<bool> running{true};
 
-const std::vector<std::string> DEFAULT_FIELDS{
+const std::vector<std::string> LEGACY_FIELDS{
     "ax", "ay", "az", "gx", "gy", "gz", "roll", "pitch", "yaw",
     "timeantwifi", "usciclo1", "usciclo2", "usciclo3", "usciclo4",
     "usciclo5", "si", "accmag", "microsds", "k3"
+};
+
+const std::vector<std::string> DEFAULT_FIELDS{
+    "timestamp_us", "ax_g", "ay_g", "az_g", "gx_deg_s", "gy_deg_s",
+    "gz_deg_s", "roll_deg", "pitch_deg", "yaw_deg", "usciclo1_us",
+    "usciclo2_us", "usciclo3_us", "usciclo4_us", "usciclo5_us", "si",
+    "accmag_g", "microsds_us"
 };
 
 const std::vector<std::string> GPS_FIELDS{
@@ -86,11 +94,6 @@ std::string lowercase(std::string text) {
     return text;
 }
 
-bool isMeasurementHeader(const std::vector<std::string>& fields) {
-    return fields.size() >= 3 && lowercase(fields[0]) == "ax" &&
-           lowercase(fields[1]) == "ay" && lowercase(fields[2]) == "az";
-}
-
 bool isNumber(const std::string& value) {
     if (value.empty()) {
         return false;
@@ -104,6 +107,20 @@ bool isMeasurement(const std::vector<std::string>& values,
                    const std::vector<std::string>& fields) {
     return values.size() == fields.size() &&
            std::all_of(values.begin(), values.end(), isNumber);
+}
+
+const std::vector<std::string>* knownSchemaFor(
+    const std::vector<std::string>& values) {
+    if (!std::all_of(values.begin(), values.end(), isNumber)) {
+        return nullptr;
+    }
+    if (values.size() == DEFAULT_FIELDS.size()) {
+        return &DEFAULT_FIELDS;
+    }
+    if (values.size() == LEGACY_FIELDS.size()) {
+        return &LEGACY_FIELDS;
+    }
+    return nullptr;
 }
 
 std::string friendlyFieldName(const std::string& field) {
@@ -127,6 +144,18 @@ std::string friendlyFieldName(const std::string& field) {
     if (key == "accmag") return "Magnitud de aceleración";
     if (key == "microsds") return "Tiempo de escritura SD";
     if (key == "k3") return "Factor K3";
+    if (key == "timestamp_us") return "Timestamp ESP32 [µs]";
+    if (key == "ax_g") return "Aceleración X [g]";
+    if (key == "ay_g") return "Aceleración Y [g]";
+    if (key == "az_g") return "Aceleración Z [g]";
+    if (key == "gx_deg_s") return "Giro X [°/s]";
+    if (key == "gy_deg_s") return "Giro Y [°/s]";
+    if (key == "gz_deg_s") return "Giro Z [°/s]";
+    if (key == "roll_deg") return "Inclinación lateral [°]";
+    if (key == "pitch_deg") return "Inclinación frontal [°]";
+    if (key == "yaw_deg") return "Orientación [°]";
+    if (key == "accmag_g") return "Magnitud de aceleración [g]";
+    if (key == "microsds_us") return "Tiempo de escritura SD [µs]";
     if (key == "doback_timestamp_utc") return "Timestamp DOBACK [UTC]";
     if (key == "gps_timestamp_utc") return "Timestamp GPS [UTC]";
     if (key == "gps_delta_ms") return "Diferencia DOBACK-GPS [ms]";
@@ -509,6 +538,41 @@ int main(int argc, char* argv[]) {
     dashboard.render(displayFields(fieldNames, gpsEnabled), currentDisplayValues,
                      lineCount, idleSeconds, updatedAt);
 
+    auto processSerialLine = [&](const std::string& completedLine) {
+        const auto fields = splitFields(completedLine);
+        if (isMeasurementHeader(fields)) {
+            fieldNames = fields;
+            if (currentValues.size() != fieldNames.size()) {
+                currentValues.clear();
+                currentDisplayValues.clear();
+                currentDobackTimestamp.reset();
+            }
+            dashboard.render(displayFields(fieldNames, gpsEnabled),
+                             currentDisplayValues, lineCount, idleSeconds,
+                             updatedAt);
+            return;
+        }
+
+        if (!isMeasurement(fields, fieldNames)) {
+            const auto* detectedSchema = knownSchemaFor(fields);
+            if (!detectedSchema) {
+                return;
+            }
+            fieldNames = *detectedSchema;
+        }
+
+        currentValues = fields;
+        currentDobackTimestamp = std::chrono::system_clock::now();
+        currentDisplayValues = displayValues(
+            currentValues, currentDobackTimestamp, gpsMatcher,
+            options->gpsMaximumDifference, gpsEnabled);
+        updatedAt = currentTime();
+        ++lineCount;
+        dashboard.render(displayFields(fieldNames, gpsEnabled),
+                         currentDisplayValues, lineCount, idleSeconds,
+                         updatedAt);
+    };
+
     while (running) {
         pollfd polls[2]{{fd, POLLIN, 0}, {-1, POLLIN, 0}};
         nfds_t pollCount = 1;
@@ -575,32 +639,14 @@ int main(int argc, char* argv[]) {
             if (c == '\n') {
                 if (discardingPartialLine) {
                     discardingPartialLine = false;
+                    if (!line.empty() &&
+                        isMeasurementHeader(splitFields(line))) {
+                        processSerialLine(line);
+                    }
                 } else if (discardingOversizedLine) {
                     discardingOversizedLine = false;
                 } else if (!line.empty()) {
-                    const auto fields = splitFields(line);
-                    if (isMeasurementHeader(fields)) {
-                        fieldNames = fields;
-                        if (currentValues.size() != fieldNames.size()) {
-                            currentValues.clear();
-                            currentDisplayValues.clear();
-                            currentDobackTimestamp.reset();
-                        }
-                        dashboard.render(displayFields(fieldNames, gpsEnabled),
-                                         currentDisplayValues, lineCount,
-                                         idleSeconds, updatedAt);
-                    } else if (isMeasurement(fields, fieldNames)) {
-                        currentValues = fields;
-                        currentDobackTimestamp = std::chrono::system_clock::now();
-                        currentDisplayValues = displayValues(
-                            currentValues, currentDobackTimestamp, gpsMatcher,
-                            options->gpsMaximumDifference, gpsEnabled);
-                        updatedAt = currentTime();
-                        ++lineCount;
-                        dashboard.render(displayFields(fieldNames, gpsEnabled),
-                                         currentDisplayValues, lineCount,
-                                         idleSeconds, updatedAt);
-                    }
+                    processSerialLine(line);
                 }
                 line.clear();
             } else if (c != '\r') {
