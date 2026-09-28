@@ -6,6 +6,11 @@
   --panel: #ffffff;
   --line: #d9e2ef;
   --accent: #0f766e;
+  --accent-soft: #e7f6f3;
+  --blue: #1d4ed8;
+  --blue-soft: #eef3ff;
+  --violet: #7c3aed;
+  --violet-soft: #f4efff;
   --danger: #b42318;
 }
 
@@ -19,16 +24,18 @@ body {
 }
 
 .shell {
-  width: min(1180px, calc(100vw - 32px));
+  width: min(1280px, calc(100vw - 32px));
   margin: 24px auto;
 }
 
 .topbar,
 .panel,
-.metric {
+.metric,
+.sensor-group,
+.si-card {
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 10px;
   box-shadow: 0 8px 28px rgba(25, 42, 70, 0.06);
 }
 
@@ -40,9 +47,10 @@ body {
   align-items: center;
 }
 
-h1, h2, p { margin: 0; }
+h1, h2, h3, p { margin: 0; }
 h1 { font-size: 24px; }
 h2 { font-size: 17px; margin-bottom: 14px; }
+h3 { font-size: 15px; margin-bottom: 14px; }
 p, small, dt { color: var(--muted); }
 
 .actions,
@@ -80,6 +88,87 @@ input {
   background: #fff;
 }
 
+.panel {
+  margin-top: 14px;
+  padding: 18px;
+}
+
+.primary {
+  background: transparent;
+  box-shadow: none;
+  border: 0;
+  padding: 6px 0 0;
+}
+
+.primary > h2 {
+  margin: 14px 2px 10px;
+  color: var(--muted);
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.sensor-board {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.75fr) repeat(2, minmax(330px, 1.4fr));
+  gap: 14px;
+}
+
+.si-card,
+.sensor-group {
+  padding: 18px;
+  min-height: 158px;
+}
+
+.si-card {
+  background: linear-gradient(145deg, #0f766e, #0a5e58);
+  border-color: #0f766e;
+  color: white;
+}
+
+.si-card span,
+.si-card small {
+  color: rgba(255, 255, 255, 0.76);
+}
+
+.si-card strong {
+  display: block;
+  font-size: clamp(46px, 5vw, 70px);
+  line-height: 1;
+  margin: 15px 0 6px;
+}
+
+.acceleration { background: var(--blue-soft); }
+.gyroscope { background: var(--violet-soft); }
+
+.axis-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.axis-grid > div {
+  min-width: 0;
+}
+
+.axis-grid span {
+  display: block;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.axis-grid strong {
+  display: block;
+  font-size: clamp(25px, 3vw, 38px);
+  line-height: 1.15;
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+}
+
+.acceleration strong { color: var(--blue); }
+.gyroscope strong { color: var(--violet); }
+
 .grid {
   display: grid;
   gap: 14px;
@@ -88,9 +177,10 @@ input {
 
 .three { grid-template-columns: repeat(3, 1fr); }
 .two { grid-template-columns: 1fr 1fr; }
+.secondary .panel { margin-top: 0; }
 
 .metric {
-  padding: 18px;
+  padding: 16px 18px;
 }
 
 .metric span {
@@ -100,19 +190,14 @@ input {
 
 .metric strong {
   display: block;
-  font-size: 44px;
+  font-size: 40px;
   line-height: 1.1;
   margin: 8px 0;
 }
 
-.roll strong { color: #0f766e; }
-.pitch strong { color: #1d4ed8; }
-.yaw strong { color: #7c3aed; }
-
-.panel {
-  margin-top: 14px;
-  padding: 18px;
-}
+.roll strong { color: var(--accent); }
+.pitch strong { color: var(--blue); }
+.yaw strong { color: var(--violet); }
 
 dl {
   display: grid;
@@ -134,39 +219,58 @@ dd {
   font-size: 13px;
 }
 
-.physics {
-  margin-top: 18px;
+.physics { margin-top: 18px; }
+
+.compact-panel h2 {
+  color: var(--muted);
+  font-size: 14px;
 }
 
-.table {
+.details-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+  gap: 6px;
 }
 
-.cell {
+.detail-cell {
   border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 10px;
-  min-height: 64px;
+  border-radius: 5px;
+  padding: 7px 9px;
+  min-height: 48px;
+  background: #fafcff;
 }
 
-.cell span {
+.detail-cell span {
   color: var(--muted);
   display: block;
-  font-size: 12px;
+  font-size: 11px;
 }
 
-.cell strong {
+.detail-cell strong {
   display: block;
-  margin-top: 5px;
+  font-size: 13px;
+  margin-top: 4px;
   overflow-wrap: anywhere;
 }
 
+.online { color: var(--accent); }
 .stale { color: var(--danger); }
+
+@media (max-width: 1050px) {
+  .sensor-board { grid-template-columns: 1fr 1fr; }
+  .si-card { grid-column: 1 / -1; min-height: auto; }
+}
 
 @media (max-width: 820px) {
   .topbar { align-items: stretch; flex-direction: column; }
-  .three, .two { grid-template-columns: 1fr; }
+  .three, .two, .sensor-board { grid-template-columns: 1fr; }
+  .si-card { grid-column: auto; }
   .metric strong { font-size: 36px; }
+}
+
+@media (max-width: 480px) {
+  .shell { width: min(100% - 18px, 1280px); margin: 10px auto; }
+  .axis-grid strong { font-size: 23px; }
+  dl { grid-template-columns: 1fr; gap: 2px; }
+  dd { margin-bottom: 8px; }
 }

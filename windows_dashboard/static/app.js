@@ -1,12 +1,48 @@
 const state = {
   latest: null,
+  lastEventAt: 0,
+  pollInFlight: false,
 };
 
 const el = (id) => document.getElementById(id);
 
+const FEATURED_KEYS = new Set([
+  "ax", "ay", "az",
+  "accelx", "accely", "accelz",
+  "accelerationx", "accelerationy", "accelerationz",
+  "gx", "gy", "gz",
+  "gyrox", "gyroy", "gyroz",
+  "roll", "rolldeg", "pitch", "pitchdeg", "yaw", "yawdeg",
+  "si", "stabilityindex", "indicedeestabilidad", "indiceestabilidad",
+]);
+
+function normalizedKey(value) {
+  return String(value)
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function numericValue(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value !== "string" || value.trim() === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function fmt(value, digits = 3) {
-  if (typeof value !== "number" || !Number.isFinite(value)) return "--";
-  return value.toFixed(digits);
+  const numeric = numericValue(value);
+  return numeric === null ? "--" : numeric.toFixed(digits);
+}
+
+function measurementValue(measurement, aliases) {
+  const wanted = new Set(aliases.map(normalizedKey));
+  const match = Object.entries(measurement || {}).find(([key]) =>
+    wanted.has(normalizedKey(key))
+  );
+  return match ? match[1] : null;
 }
 
 function setDl(container, values) {
@@ -23,10 +59,11 @@ function setDl(container, values) {
 function setCells(container, values) {
   container.innerHTML = "";
   Object.entries(values || {}).forEach(([key, value]) => {
+    if (FEATURED_KEYS.has(normalizedKey(key))) return;
     const cell = document.createElement("div");
     const label = document.createElement("span");
     const strong = document.createElement("strong");
-    cell.className = "cell";
+    cell.className = "detail-cell";
     label.textContent = key;
     strong.textContent = value === null || value === undefined ? "--" : String(value);
     cell.append(label, strong);
@@ -34,18 +71,33 @@ function setCells(container, values) {
   });
 }
 
+function setPrimarySensors(measurement) {
+  el("accelX").textContent = fmt(measurementValue(measurement, ["ax", "accel_x", "acceleration_x"]), 3);
+  el("accelY").textContent = fmt(measurementValue(measurement, ["ay", "accel_y", "acceleration_y"]), 3);
+  el("accelZ").textContent = fmt(measurementValue(measurement, ["az", "accel_z", "acceleration_z"]), 3);
+  el("gyroX").textContent = fmt(measurementValue(measurement, ["gx", "gyro_x"]), 3);
+  el("gyroY").textContent = fmt(measurementValue(measurement, ["gy", "gyro_y"]), 3);
+  el("gyroZ").textContent = fmt(measurementValue(measurement, ["gz", "gyro_z"]), 3);
+  el("stabilityIndex").textContent = fmt(
+    measurementValue(measurement, ["si", "stability_index", "indice_estabilidad"]),
+    3
+  );
+}
+
 function render(snapshot) {
   state.latest = snapshot;
   const telemetry = snapshot.telemetry || {};
   const orientation = telemetry.orientation || {};
+  const measurement = telemetry.measurement || {};
   const age = snapshot.age_s;
   const online = typeof age === "number" && age < 3;
 
   el("connection").textContent = online
     ? `Recibiendo datos, última muestra hace ${age.toFixed(1)} s`
     : "Esperando telemetría UDP...";
-  el("connection").className = online ? "" : "stale";
+  el("connection").className = online ? "online" : "stale";
 
+  setPrimarySensors(measurement);
   el("roll").textContent = fmt(orientation.roll_deg, 2);
   el("pitch").textContent = fmt(orientation.pitch_deg, 2);
   el("yaw").textContent = fmt(orientation.yaw_deg, 2);
@@ -67,7 +119,21 @@ function render(snapshot) {
     "Coeff_SI": fmt(physics.coeff_si, 6),
     "Alfa (deg)": fmt(physics.alfa_deg, 4),
   });
-  setCells(el("measurement"), telemetry.measurement || {});
+  setCells(el("measurement"), measurement);
+}
+
+async function fetchState() {
+  if (state.pollInFlight) return;
+  state.pollInFlight = true;
+  try {
+    const response = await fetch("/api/state", {cache: "no-store"});
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    render(await response.json());
+  } catch (_) {
+    // EventSource will reconnect automatically; the status remains stale meanwhile.
+  } finally {
+    state.pollInFlight = false;
+  }
 }
 
 async function postJson(url, payload = {}) {
@@ -115,7 +181,9 @@ el("calibrateBtn").addEventListener("click", async () => {
 el("configForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
-  const payload = Object.fromEntries(Array.from(form.entries()).map(([key, value]) => [key, Number(value)]));
+  const payload = Object.fromEntries(
+    Array.from(form.entries()).map(([key, value]) => [key, Number(value)])
+  );
   try {
     const data = await postJson("/api/config", payload);
     render({
@@ -128,10 +196,20 @@ el("configForm").addEventListener("submit", async (event) => {
   }
 });
 
-fetch("/api/state")
-  .then((response) => response.json())
-  .then(render)
-  .catch(() => {});
+fetchState();
 
 const events = new EventSource("/events");
-events.onmessage = (event) => render(JSON.parse(event.data));
+events.onmessage = (event) => {
+  try {
+    render(JSON.parse(event.data));
+    state.lastEventAt = Date.now();
+  } catch (_) {
+    fetchState();
+  }
+};
+events.onerror = () => fetchState();
+
+// If an SSE stream stays open but stops producing samples, polling recovers the UI.
+setInterval(() => {
+  if (Date.now() - state.lastEventAt > 2000) fetchState();
+}, 1000);

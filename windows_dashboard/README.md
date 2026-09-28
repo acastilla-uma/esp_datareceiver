@@ -1,7 +1,9 @@
 # DOBACK UDP Dashboard
 
-Panel local para Windows que recibe telemetría JSON por UDP, muestra roll, pitch,
-yaw, GPS y el resto de campos, y guarda mediciones a CSV.
+Panel local para Windows que recibe telemetría JSON por UDP. Destaca en la
+parte superior el índice de estabilidad (SI), los tres ejes del acelerómetro y
+del giróscopo, y la orientación roll, pitch y yaw. Los campos secundarios se
+muestran de forma compacta al final y las mediciones pueden guardarse en CSV.
 
 ## Protocolo
 
@@ -12,7 +14,15 @@ Telemetría esperada en UDP `50100`:
   "type": "telemetry",
   "sequence": 1,
   "doback_timestamp_utc": "2026-09-25T10:00:00.000000Z",
-  "measurement": {"roll_deg": 1.2},
+  "measurement": {
+    "ax": 0.01,
+    "ay": -0.02,
+    "az": 1.0,
+    "gx": 0.5,
+    "gy": -0.3,
+    "gz": 0.1,
+    "si": 0.94
+  },
   "orientation": {"roll_deg": 1.2, "pitch_deg": -0.4, "yaw_deg": 0.1},
   "gps": {"latitude": 40.0, "longitude": -3.0},
   "physics": null
@@ -35,8 +45,8 @@ Comandos enviados a la Jetson por UDP `50101`:
 }
 ```
 
-El panel tolera campos ausentes. La calibración se ejecuta en la Jetson: allí se
-guardan los offsets de roll, pitch y yaw, y se conservan también los valores
+El panel tolera campos ausentes. La calibración se ejecuta en la Jetson: allí
+se guardan los offsets de roll, pitch y yaw, y se conservan también los valores
 brutos en la telemetría para mantener trazabilidad.
 
 ## Ejecutar en Windows
@@ -48,17 +58,13 @@ cd C:\ruta\a\esp_datareceiver\windows_dashboard
 python .\server.py
 ```
 
-Abre:
-
-```text
-http://127.0.0.1:8080
-```
+Abre `http://127.0.0.1:8080`.
 
 Por defecto el panel aprende automáticamente la IP de la Jetson a partir del
-primer datagrama. También puedes fijarla, o cambiar los puertos:
+primer datagrama. También puedes fijarla o cambiar los puertos:
 
 ```powershell
-python .\server.py --http-port 8080 --udp-port 50100 --jetson-ip 192.168.8.10 --command-port 50101
+python .\server.py --http-port 8080 --udp-port 50100 --jetson-ip 192.168.8.174 --command-port 50101
 ```
 
 Los CSV se guardan en `measurements/` por defecto. Puedes cambiarlo con

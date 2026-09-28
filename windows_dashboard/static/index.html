@@ -21,25 +21,54 @@
       </div>
     </section>
 
-    <section class="grid three">
-      <article class="metric roll">
-        <span>Roll</span>
-        <strong id="roll">--</strong>
-        <small>grados</small>
-      </article>
-      <article class="metric pitch">
-        <span>Pitch</span>
-        <strong id="pitch">--</strong>
-        <small>grados</small>
-      </article>
-      <article class="metric yaw">
-        <span>Yaw</span>
-        <strong id="yaw">--</strong>
-        <small>grados</small>
-      </article>
+    <section class="primary panel">
+      <h2>Datos principales</h2>
+      <div class="sensor-board">
+        <article class="si-card">
+          <span>Índice de estabilidad</span>
+          <strong id="stabilityIndex">--</strong>
+          <small>SI</small>
+        </article>
+
+        <article class="sensor-group acceleration">
+          <h3>Acelerómetro <small>g</small></h3>
+          <div class="axis-grid">
+            <div><span>X</span><strong id="accelX">--</strong></div>
+            <div><span>Y</span><strong id="accelY">--</strong></div>
+            <div><span>Z</span><strong id="accelZ">--</strong></div>
+          </div>
+        </article>
+
+        <article class="sensor-group gyroscope">
+          <h3>Giroscopio <small>°/s</small></h3>
+          <div class="axis-grid">
+            <div><span>X</span><strong id="gyroX">--</strong></div>
+            <div><span>Y</span><strong id="gyroY">--</strong></div>
+            <div><span>Z</span><strong id="gyroZ">--</strong></div>
+          </div>
+        </article>
+      </div>
+
+      <div class="grid three orientation-grid">
+        <article class="metric roll">
+          <span>Roll</span>
+          <strong id="roll">--</strong>
+          <small>grados</small>
+        </article>
+        <article class="metric pitch">
+          <span>Pitch</span>
+          <strong id="pitch">--</strong>
+          <small>grados</small>
+        </article>
+        <article class="metric yaw">
+          <span>Yaw</span>
+          <strong id="yaw">--</strong>
+          <small>grados</small>
+        </article>
+      </div>
     </section>
 
-    <section class="grid two">
+    <section class="grid two secondary">
       <article class="panel">
         <h2>GPS</h2>
         <dl id="gpsList"></dl>
@@ -66,9 +95,9 @@
       <dl id="physicsList" class="physics"></dl>
     </section>
 
-    <section class="panel">
-      <h2>Medición completa</h2>
-      <div id="measurement" class="table"></div>
+    <section class="panel compact-panel">
+      <h2>Otros datos de la medición</h2>
+      <div id="measurement" class="details-grid"></div>
     </section>
   </main>
   <script src="/app.js"></script>

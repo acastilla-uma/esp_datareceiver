@@ -49,7 +49,9 @@ def compute_physics(
     if any(not math.isfinite(value) for value in values):
         raise ValueError("Los parámetros deben ser números finitos.")
     if mass_kg <= 0 or track_width_m <= 0 or cg_height_m <= 0:
-        raise ValueError("Peso, ancho de vía y altura del centro de gravedad deben ser mayores que cero.")
+        raise ValueError(
+            "Peso, ancho de vía y altura del centro de gravedad deben ser mayores que cero."
+        )
     if roll_inertia_kg_m2 < 0:
         raise ValueError("El momento de inercia no puede ser negativo.")
 
@@ -113,7 +115,6 @@ class Recorder:
 class AppState:
     def __init__(self, output_dir, jetson_ip, command_port):
         self.lock = threading.Lock()
-        self.condition = threading.Condition(self.lock)
         self.last_telemetry = None
         self.last_seen_monotonic = None
         self.last_sender_ip = None
@@ -151,36 +152,72 @@ class AppState:
             "physics": self.current_physics,
         }
 
+    @staticmethod
+    def _put_latest(client, payload):
+        """Keep only the newest snapshot without disconnecting a slow browser."""
+        try:
+            client.put_nowait(payload)
+            return
+        except queue.Full:
+            pass
+
+        try:
+            client.get_nowait()
+        except queue.Empty:
+            pass
+
+        try:
+            client.put_nowait(payload)
+        except queue.Full:
+            # The consumer raced us and the next broadcast will try again.
+            pass
+
+    def register_client(self):
+        client = queue.Queue(maxsize=1)
+        with self.lock:
+            self.clients.append(client)
+            payload = json.dumps(self._snapshot_locked(), separators=(",", ":"))
+            self._put_latest(client, payload)
+        return client
+
+    def unregister_client(self, client):
+        with self.lock:
+            try:
+                self.clients.remove(client)
+            except ValueError:
+                pass
+
     def _broadcast_locked(self):
         payload = json.dumps(self._snapshot_locked(), separators=(",", ":"))
-        live_clients = []
         for client in self.clients:
-            try:
-                client.put_nowait(payload)
-                live_clients.append(client)
-            except queue.Full:
-                pass
-        self.clients = live_clients
-        self.condition.notify_all()
+            self._put_latest(client, payload)
 
     def send_command(self, payload):
         raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
         with self.lock:
             target_ip = self.last_sender_ip if self.jetson_ip == "auto" else self.jetson_ip
         if not target_ip:
-            raise ValueError("Aún no se conoce la IP de la Jetson; espera la primera telemetría.")
+            raise ValueError(
+                "Aún no se conoce la IP de la Jetson; espera la primera telemetría."
+            )
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.sendto(raw, (target_ip, self.command_port))
         with self.lock:
-            self.last_command_status = f"Enviado {payload.get('type')} a {target_ip}:{self.command_port}"
+            self.last_command_status = (
+                f"Enviado {payload.get('type')} a {target_ip}:{self.command_port}"
+            )
             if payload.get("type") == "config":
-                self.current_physics = {k: v for k, v in payload.items() if k != "type"}
-                self.current_physics.update(compute_physics(
-                    float(payload["mass_kg"]),
-                    float(payload["track_width_m"]),
-                    float(payload["cg_height_m"]),
-                    float(payload["roll_inertia_kg_m2"]),
-                ))
+                self.current_physics = {
+                    key: value for key, value in payload.items() if key != "type"
+                }
+                self.current_physics.update(
+                    compute_physics(
+                        float(payload["mass_kg"]),
+                        float(payload["track_width_m"]),
+                        float(payload["cg_height_m"]),
+                        float(payload["roll_inertia_kg_m2"]),
+                    )
+                )
             self._broadcast_locked()
 
 
@@ -208,7 +245,9 @@ def write_csv_atomic(path, rows):
     if not columns:
         columns = ["received_utc"]
 
-    fd, tmp_name = tempfile.mkstemp(prefix=path.name, suffix=".tmp", dir=str(path.parent))
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=path.name, suffix=".tmp", dir=str(path.parent)
+    )
     try:
         with os.fdopen(fd, "w", newline="", encoding="utf-8") as tmp:
             writer = csv.DictWriter(tmp, fieldnames=columns, extrasaction="ignore")
@@ -224,7 +263,8 @@ def write_csv_atomic(path, rows):
 
 def make_handler(state, static_dir):
     class Handler(BaseHTTPRequestHandler):
-        server_version = "DobackDashboard/1.0"
+        server_version = "DobackDashboard/1.1"
+        protocol_version = "HTTP/1.1"
 
         def do_GET(self):
             parsed = urlparse(self.path)
@@ -233,7 +273,9 @@ def make_handler(state, static_dir):
             elif parsed.path == "/app.css":
                 self.send_static(static_dir / "app.css", "text/css; charset=utf-8")
             elif parsed.path == "/app.js":
-                self.send_static(static_dir / "app.js", "application/javascript; charset=utf-8")
+                self.send_static(
+                    static_dir / "app.js", "application/javascript; charset=utf-8"
+                )
             elif parsed.path == "/api/state":
                 self.send_json(state.snapshot())
             elif parsed.path == "/events":
@@ -253,7 +295,9 @@ def make_handler(state, static_dir):
                 elif parsed.path == "/api/stop":
                     data = parse_json_body(self)
                     with state.lock:
-                        path = state.recorder.stop(str(data.get("name", "") or state.recorder.name))
+                        path = state.recorder.stop(
+                            str(data.get("name", "") or state.recorder.name)
+                        )
                         state._broadcast_locked()
                     self.send_json({"ok": True, "path": str(path)})
                 elif parsed.path == "/api/calibrate":
@@ -286,6 +330,7 @@ def make_handler(state, static_dir):
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(data)
 
@@ -294,6 +339,7 @@ def make_handler(state, static_dir):
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(data)
 
@@ -303,20 +349,21 @@ def make_handler(state, static_dir):
             self.send_header("Cache-Control", "no-cache")
             self.send_header("Connection", "keep-alive")
             self.end_headers()
-            client = queue.Queue(maxsize=5)
-            with state.lock:
-                state.clients.append(client)
-                client.put_nowait(json.dumps(state._snapshot_locked(), separators=(",", ":")))
-            while True:
-                try:
-                    payload = client.get(timeout=15)
-                    self.wfile.write(f"data: {payload}\n\n".encode("utf-8"))
+            client = state.register_client()
+            try:
+                self.wfile.write(b"retry: 1000\n\n")
+                self.wfile.flush()
+                while True:
+                    try:
+                        payload = client.get(timeout=10)
+                        self.wfile.write(f"data: {payload}\n\n".encode("utf-8"))
+                    except queue.Empty:
+                        self.wfile.write(b": keepalive\n\n")
                     self.wfile.flush()
-                except queue.Empty:
-                    self.wfile.write(b": keepalive\n\n")
-                    self.wfile.flush()
-                except (BrokenPipeError, ConnectionResetError):
-                    break
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
+            finally:
+                state.unregister_client(client)
 
         def log_message(self, fmt, *args):
             return
