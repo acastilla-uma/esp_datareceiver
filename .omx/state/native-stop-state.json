@@ -1,0 +1,24 @@
+{
+  "sessions": {
+    "01a0ec7a-d295-73a1-aa3a-bb92afdff949": {
+      "ordinary_no_progress_guard": {
+        "fingerprint": "ordinary|el botón web calibra la orientación, no el imu crudo. ```text botón “calibrar” → post /api/calibrate → udp {\"type\":\"calibrate\"} a la jetson:50101 → la jetson guarda el roll/pitch/yaw actuales como offsets → envía orientación calibrada = orientación bruta − offset ``` en tu csv se ve claro: por ejemplo, `raw_yaw_deg` ≈ 764.67 y `yaw_deg` ≈ 2.90. la calibración ha restado un offset cercano a 761.77°. lo mismo ocurre con roll y pitch. por tanto, al pulsarlo debes tener el vehículo quieto y en la postura que quieres considerar “cero”. si está inclinado, girando o vibrando, esa posición queda definida como el nuevo cero. no corrige: - los valores `gx`, `gy`, `gz` del giroscopio ni sus unidades mdps. - el ruido instantáneo. - el offset interno del imu que detectamos en el firmware. - la deriva física de yaw a largo plazo. además, la web solo confirma que ha enviado el udp; no espera un acuse de recibo que confirme que la jetson realmente aplicó la calibración. el flujo está en [app.js](c:/users/alexc/nextcloud/phd-alexcastilla/code/esp32_data_receiver/windows_dashboard/static/app.js:173), [server.py](c:/users/alexc/nextcloud/phd-alexcastilla/code/esp32_data_receiver/windows_dashboard/server.py:303) y se documenta en [readme.md](c:/users/alexc/nextcloud/phd-alexcastilla/code/esp32_data_receiver/windows_dashboard/readme.md:32). la implementación exacta del receptor udp de la jetson no está en este repositorio, así que no puedo confirmar desde aquí cuántas muestras promedia ni dónde persiste los offsets.",
+        "first_seen_at": "2026-09-29T09:35:34.912Z",
+        "last_seen_at": "2026-09-29T09:35:34.912Z",
+        "repeat_count": 1,
+        "last_turn_id": "01a0ec84-3f65-7912-a13a-0f4b7b181672",
+        "last_thread_id": null
+      }
+    },
+    "01a0ec89-7c44-7a21-83e7-595664e585da": {
+      "ordinary_no_progress_guard": {
+        "fingerprint": "ordinary|el commit no se creó ni se hizo push porque `git add .` incluiría archivos no rastreados potencialmente sensibles: - `windows_dashboard/measurements/medida_20260929_111754.csv` - `.omx/` (estado y logs internos) - `cabina_v2_4/cabina_v2_4.ino` - `jetson-doback.code-workspace` ¿confirmas que publique también esos archivos, o prefieres que el commit incluya únicamente los seis archivos modificados del dashboard?",
+        "first_seen_at": "2026-09-29T10:12:13.429Z",
+        "last_seen_at": "2026-09-29T10:12:13.429Z",
+        "repeat_count": 1,
+        "last_turn_id": "01a0eca4-4b2a-7a53-8d70-215a2b190a5a",
+        "last_thread_id": null
+      }
+    }
+  }
+}

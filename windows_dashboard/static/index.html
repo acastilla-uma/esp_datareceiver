@@ -68,6 +68,39 @@
       </div>
     </section>
 
+    <section class="panel stability-model" aria-labelledby="stabilityModelTitle">
+      <div class="section-heading">
+        <div>
+          <h2 id="stabilityModelTitle">Ecuación de estabilidad lateral</h2>
+          <p id="stabilitySource">Esperando acelerómetro y giroscopio.</p>
+        </div>
+        <article class="calculated-si">
+          <span>SI calculado</span>
+          <strong id="calculatedStabilityIndex">--</strong>
+        </article>
+      </div>
+
+      <div class="equation-display" aria-label="Ecuación del índice de estabilidad">
+        <span>SI</span><span>=</span><span>1</span><span>−</span>
+        <span class="equation-term static-highlight" id="staticEquation">k₁ · φ / φcrit</span>
+        <span>−</span>
+        <span class="equation-term dynamic-highlight" id="dynamicEquation">k₂ · (ω / ωcrit)²</span>
+      </div>
+
+      <div class="stability-terms">
+        <article class="stability-term static-term">
+          <div class="term-title"><span>Parte estática</span><strong id="staticPenalty">--</strong></div>
+          <p>k₁ · φ / φcrit</p>
+          <dl id="staticTerms"></dl>
+        </article>
+        <article class="stability-term dynamic-term">
+          <div class="term-title"><span>Parte dinámica</span><strong id="dynamicPenalty">--</strong></div>
+          <p>k₂ · (ω / ωcrit)²</p>
+          <dl id="dynamicTerms"></dl>
+        </article>
+      </div>
+    </section>
+
     <section class="grid two secondary">
       <article class="panel">
         <h2>GPS</h2>
@@ -90,6 +123,9 @@
         <label>Ancho de vía (m)<input name="track_width_m" type="number" step="0.001" min="0.001" value="0.47" required></label>
         <label>Altura CG (m)<input name="cg_height_m" type="number" step="0.001" min="0.001" value="0.25" required></label>
         <label>Inercia alabeo (kg m²)<input name="roll_inertia_kg_m2" type="number" step="0.001" min="0" value="0" required></label>
+        <label>Margen αv (°)<input name="alpha_margin_deg" type="number" step="0.001" value="3" required></label>
+        <label>Factor estático k₁<input name="k1" type="number" step="0.001" min="0" value="1.15" required></label>
+        <label>Factor dinámico k₂<input name="k2" type="number" step="0.001" min="0" value="2.05" required></label>
         <button type="submit">Enviar configuración</button>
       </form>
       <dl id="physicsList" class="physics"></dl>

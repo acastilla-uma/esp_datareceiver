@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "../Jetson-DOBACK"
+		},
+		{
+			"path": "../cabina_v2_4"
+		},
+		{
+			"path": "."
+		}
+	],
+	"settings": {}
+}

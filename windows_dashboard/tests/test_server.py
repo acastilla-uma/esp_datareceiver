@@ -24,6 +24,12 @@ class PhysicsTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             compute_physics(0.0, 0.47, 0.25, 0.0)
 
+    def test_includes_live_stability_parameters(self):
+        result = compute_physics(50.0, 0.47, 0.25, 0.0, 3.0, 1.15, 2.05)
+        self.assertAlmostEqual(result["alphav_deg"], result["alfa_deg"] + 3.0)
+        self.assertEqual(result["k1"], 1.15)
+        self.assertEqual(result["k2"], 2.05)
+
 
 class LiveUpdatesTest(unittest.TestCase):
     def test_slow_client_stays_registered_and_receives_latest_snapshot(self):

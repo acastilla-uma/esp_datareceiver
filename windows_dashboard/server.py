@@ -44,8 +44,19 @@ def compute_physics(
     track_width_m,
     cg_height_m,
     roll_inertia_kg_m2,
+    alpha_margin_deg=3.0,
+    k1=1.15,
+    k2=2.05,
 ):
-    values = [mass_kg, track_width_m, cg_height_m, roll_inertia_kg_m2]
+    values = [
+        mass_kg,
+        track_width_m,
+        cg_height_m,
+        roll_inertia_kg_m2,
+        alpha_margin_deg,
+        k1,
+        k2,
+    ]
     if any(not math.isfinite(value) for value in values):
         raise ValueError("Los parámetros deben ser números finitos.")
     if mass_kg <= 0 or track_width_m <= 0 or cg_height_m <= 0:
@@ -54,18 +65,26 @@ def compute_physics(
         )
     if roll_inertia_kg_m2 < 0:
         raise ValueError("El momento de inercia no puede ser negativo.")
+    if k1 < 0 or k2 < 0:
+        raise ValueError("Los factores k1 y k2 no pueden ser negativos.")
 
     d1 = math.sqrt(cg_height_m**2 + (track_width_m / 2.0) ** 2)
     ixx = mass_kg * d1**2 + roll_inertia_kg_m2
     if ixx <= 0:
         raise ValueError("Ixx no puede ser cero.")
     fic = math.atan(track_width_m / (2.0 * cg_height_m)) * 180.0 / math.pi
+    alfa_deg = 90.0 - fic
     return {
         "d1_m": d1,
         "ixx_kg_m2": ixx,
         "fic_deg": fic,
         "coeff_si": 2.0 * mass_kg * 9.81 / ixx,
-        "alfa_deg": 90.0 - fic,
+        "alfa_deg": alfa_deg,
+        # El firmware usa alphav = alpha + margen en el término dinámico.
+        "alphav_deg": alfa_deg + alpha_margin_deg,
+        "alpha_margin_deg": alpha_margin_deg,
+        "k1": k1,
+        "k2": k2,
     }
 
 
@@ -206,18 +225,11 @@ class AppState:
             self.last_command_status = (
                 f"Enviado {payload.get('type')} a {target_ip}:{self.command_port}"
             )
-            if payload.get("type") == "config":
-                self.current_physics = {
-                    key: value for key, value in payload.items() if key != "type"
-                }
-                self.current_physics.update(
-                    compute_physics(
-                        float(payload["mass_kg"]),
-                        float(payload["track_width_m"]),
-                        float(payload["cg_height_m"]),
-                        float(payload["roll_inertia_kg_m2"]),
-                    )
-                )
+            self._broadcast_locked()
+
+    def set_current_physics(self, physics):
+        with self.lock:
+            self.current_physics = physics
             self._broadcast_locked()
 
 
@@ -312,13 +324,23 @@ def make_handler(state, static_dir):
                         "cg_height_m": float(data["cg_height_m"]),
                         "roll_inertia_kg_m2": float(data["roll_inertia_kg_m2"]),
                     }
+                    alpha_margin_deg = float(data.get("alpha_margin_deg", 3.0))
+                    k1 = float(data.get("k1", 1.15))
+                    k2 = float(data.get("k2", 2.05))
                     physics = compute_physics(
                         payload["mass_kg"],
                         payload["track_width_m"],
                         payload["cg_height_m"],
                         payload["roll_inertia_kg_m2"],
+                        alpha_margin_deg,
+                        k1,
+                        k2,
                     )
                     state.send_command(payload)
+                    state.set_current_physics({
+                        **{key: value for key, value in payload.items() if key != "type"},
+                        **physics,
+                    })
                     self.send_json({"ok": True, "physics": physics})
                 else:
                     self.send_error(HTTPStatus.NOT_FOUND)

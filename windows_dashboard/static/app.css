@@ -221,6 +221,96 @@ dd {
 
 .physics { margin-top: 18px; }
 
+.section-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: start;
+}
+
+.section-heading h2 { margin-bottom: 5px; }
+
+.calculated-si {
+  min-width: 150px;
+  padding: 10px 14px;
+  border: 1px solid #9bd4cd;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  text-align: right;
+}
+
+.calculated-si span,
+.term-title span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.calculated-si strong {
+  display: block;
+  color: var(--accent);
+  font-size: 30px;
+  line-height: 1.1;
+  margin-top: 3px;
+}
+
+.equation-display {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 18px 0 14px;
+  font-family: Cambria, Georgia, serif;
+  font-size: clamp(19px, 2.25vw, 29px);
+  text-align: center;
+}
+
+.equation-term {
+  padding: 7px 10px;
+  border: 2px solid;
+  border-radius: 5px;
+  font-size: 0.73em;
+}
+
+.static-highlight { border-color: var(--blue); background: var(--blue-soft); }
+.dynamic-highlight { border-color: var(--violet); background: var(--violet-soft); }
+
+.stability-terms {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.stability-term {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-top: 4px solid;
+  border-radius: 8px;
+}
+
+.static-term { border-top-color: var(--blue); background: #fbfcff; }
+.dynamic-term { border-top-color: var(--violet); background: #fdfbff; }
+
+.term-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.term-title strong { font-size: 27px; }
+.static-term .term-title strong { color: var(--blue); }
+.dynamic-term .term-title strong { color: var(--violet); }
+
+.stability-term > p {
+  margin: 7px 0 14px;
+  color: var(--ink);
+  font-family: Cambria, Georgia, serif;
+  font-size: 18px;
+}
+
+.stability-term dl { grid-template-columns: minmax(135px, 1.2fr) 1fr; }
+
 .compact-panel h2 {
   color: var(--muted);
   font-size: 14px;
@@ -266,6 +356,7 @@ dd {
   .three, .two, .sensor-board { grid-template-columns: 1fr; }
   .si-card { grid-column: auto; }
   .metric strong { font-size: 36px; }
+  .stability-terms { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 480px) {
@@ -273,4 +364,7 @@ dd {
   .axis-grid strong { font-size: 23px; }
   dl { grid-template-columns: 1fr; gap: 2px; }
   dd { margin-bottom: 8px; }
+  .section-heading { align-items: stretch; flex-direction: column; }
+  .calculated-si { text-align: left; }
+  .equation-display { justify-content: flex-start; }
 }

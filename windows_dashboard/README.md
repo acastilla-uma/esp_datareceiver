@@ -15,12 +15,12 @@ Telemetría esperada en UDP `50100`:
   "sequence": 1,
   "doback_timestamp_utc": "2026-09-25T10:00:00.000000Z",
   "measurement": {
-    "ax": 0.01,
-    "ay": -0.02,
-    "az": 1.0,
-    "gx": 0.5,
-    "gy": -0.3,
-    "gz": 0.1,
+    "ax_g": 0.01,
+    "ay_g": -0.02,
+    "az_g": 1.0,
+    "gx_deg_s": 0.5,
+    "gy_deg_s": -0.3,
+    "gz_deg_s": 0.1,
     "si": 0.94
   },
   "orientation": {"roll_deg": 1.2, "pitch_deg": -0.4, "yaw_deg": 0.1},
@@ -48,6 +48,14 @@ Comandos enviados a la Jetson por UDP `50101`:
 El panel tolera campos ausentes. La calibración se ejecuta en la Jetson: allí
 se guardan los offsets de roll, pitch y yaw, y se conservan también los valores
 brutos en la telemetría para mantener trazabilidad.
+
+### Unidades de sensores
+
+Para evitar ambigüedad, los emisores nuevos deben usar `*_g` para aceleración y
+`*_deg_s` para velocidad angular. El panel sigue aceptando la telemetría
+histórica del ESP32: `ax`, `ay`, `az` se interpretan como **mg** y `gx`, `gy`,
+`gz` como **mdps**; los convierte a `g` y `°/s` sólo para la visualización y
+para el cálculo. Por ejemplo, `gy: -189.09` se muestra como `-0.189 °/s`.
 
 ## Ejecutar en Windows
 
@@ -80,6 +88,21 @@ Con `M = mass_kg`, `S = track_width_m`, `Hg = cg_height_m` e
 - `FIc = atan(S / (2 * Hg)) * 180 / pi`
 - `Coeff_SI = 2 * M * 9.81 / Ixx`
 - `Alfa = 90 - FIc`
+
+Además, el bloque **Ecuación de estabilidad lateral** muestra el mismo modelo
+que el firmware, con sus dos penalizaciones por separado:
+
+- `SI = 1 - E_estática - E_dinámica`
+- `E_estática = k1 * φ / φcrit`, donde `φ = |atan(ax / az)|` y
+  `φcrit = atan((S/2) / Hg)`.
+- `E_dinámica = k2 * (ω / ωcrit)^2`, donde `ω = |Gy|` y
+  `ωcrit = sqrt(Coeff_SI * S * αv / 4) * 360 / 6.28`.
+
+`Gy` y `ωcrit` se presentan en `°/s` (el firmware original emplea mdps y
+multiplica `ωcrit` por 1000). `αv = Alfa + margen αv`; el margen, `k1` y `k2`
+se pueden modificar desde **Parámetros dinámicos** y se aplican al instante en
+la ecuación. El comando UDP conserva sus cuatro parámetros de geometría y masa;
+estos tres factores se mantienen en el panel para el cálculo visual.
 
 ## Tests
 
