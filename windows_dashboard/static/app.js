@@ -113,22 +113,23 @@ function configValues() {
 function resolvedPhysics(rawPhysics = {}) {
   const form = configValues();
   const number = (...values) => values.map(numericValue).find((value) => value !== null);
-  const trackWidthM = number(rawPhysics.track_width_m, numericValue(rawPhysics.s) === null ? null : numericValue(rawPhysics.s) / 1000, form.track_width_m);
-  const cgHeightM = number(rawPhysics.cg_height_m, form.cg_height_m);
-  const d1M = number(rawPhysics.d1_m, rawPhysics.d1, Math.sqrt(cgHeightM ** 2 + (trackWidthM / 2) ** 2));
-  const ficDeg = number(rawPhysics.fic_deg, Math.atan(trackWidthM / (2 * cgHeightM)) * 180 / Math.PI);
-  const alphaDeg = number(rawPhysics.alfa_deg, rawPhysics.alpha, 90 - ficDeg);
+  const positive = (...values) => values.map(numericValue).find((value) => value !== null && value > 0);
+  const trackWidthM = positive(rawPhysics.track_width_m, numericValue(rawPhysics.s) === null ? null : numericValue(rawPhysics.s) / 1000, form.track_width_m);
+  const cgHeightM = positive(rawPhysics.cg_height_m, form.cg_height_m);
+  const d1M = positive(rawPhysics.d1_m, rawPhysics.d1, Math.sqrt(cgHeightM ** 2 + (trackWidthM / 2) ** 2));
+  const ficDeg = positive(rawPhysics.fic_deg, Math.atan(trackWidthM / (2 * cgHeightM)) * 180 / Math.PI);
+  const alphaDeg = positive(rawPhysics.alfa_deg, rawPhysics.alpha, 90 - ficDeg);
   const alphaMarginDeg = number(rawPhysics.alpha_margin_deg, form.alpha_margin_deg);
-  const alphaVDeg = number(rawPhysics.alphav_deg, rawPhysics.alphav, alphaDeg + alphaMarginDeg);
-  const massKg = number(rawPhysics.mass_kg, form.mass_kg);
+  const alphaVDeg = positive(rawPhysics.alphav_deg, rawPhysics.alphav, alphaDeg + alphaMarginDeg);
+  const massKg = positive(rawPhysics.mass_kg, form.mass_kg);
   const inertia = number(rawPhysics.roll_inertia_kg_m2, form.roll_inertia_kg_m2);
-  const ixx = number(rawPhysics.ixx_kg_m2, rawPhysics.ixx, massKg * d1M ** 2 + inertia);
+  const ixx = positive(rawPhysics.ixx_kg_m2, rawPhysics.ixx, massKg * d1M ** 2 + inertia);
   return {
     trackWidthM, cgHeightM, d1M, ficDeg, alphaDeg, alphaVDeg, alphaMarginDeg,
     massKg, inertia, ixx,
-    coeff: number(rawPhysics.coeff_si, rawPhysics.coeff, 2 * massKg * 9.81 / ixx),
-    k1: number(rawPhysics.k1, form.k1),
-    k2: number(rawPhysics.k2, form.k2),
+    coeff: positive(rawPhysics.coeff_si, rawPhysics.coeff, 2 * massKg * 9.81 / ixx),
+    k1: positive(rawPhysics.k1, form.k1),
+    k2: positive(rawPhysics.k2, form.k2),
   };
 }
 
