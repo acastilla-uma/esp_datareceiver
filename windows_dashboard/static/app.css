@@ -28,6 +28,26 @@ body {
   margin: 24px auto;
 }
 
+.view-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.view-tab {
+  background: transparent;
+  color: var(--muted);
+  border-color: var(--line);
+}
+
+.view-tab.is-active {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
+.is-hidden { display: none !important; }
+
 .topbar,
 .panel,
 .metric,
@@ -221,6 +241,62 @@ dd {
 
 .physics { margin-top: 18px; }
 
+.history-panel { border-left: 4px solid var(--accent); }
+
+.history-timestamp {
+  padding: 10px 12px;
+  border-radius: 7px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.si-card .raw-si-reference {
+  display: block;
+  margin-top: 8px;
+  color: rgba(255, 255, 255, 0.76);
+}
+
+.si-card .raw-si-reference strong {
+  display: inline;
+  font-size: inherit;
+  margin: 0;
+  color: white;
+}
+
+.history-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-top: 16px;
+}
+
+.file-picker {
+  display: inline-flex;
+  align-items: center;
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  color: var(--accent);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.file-picker input { display: none; }
+
+.history-progress {
+  display: grid;
+  gap: 7px;
+  margin-top: 16px;
+}
+
+.history-progress label { color: var(--muted); }
+.history-progress strong { color: var(--ink); }
+.history-progress input { width: 100%; accent-color: var(--accent); }
+
 .section-heading {
   display: flex;
   justify-content: space-between;
@@ -367,4 +443,6 @@ dd {
   .section-heading { align-items: stretch; flex-direction: column; }
   .calculated-si { text-align: left; }
   .equation-display { justify-content: flex-start; }
+  .view-tabs, .history-toolbar { display: grid; grid-template-columns: 1fr; }
+  .history-timestamp { white-space: normal; }
 }

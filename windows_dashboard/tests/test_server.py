@@ -5,7 +5,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from server import AppState, compute_physics, sanitize_measurement_name, write_csv_atomic
+from server import (
+    AppState,
+    compute_physics,
+    flatten_telemetry,
+    sanitize_measurement_name,
+    write_csv_atomic,
+)
 
 
 class PhysicsTest(unittest.TestCase):
@@ -52,6 +58,24 @@ class LiveUpdatesTest(unittest.TestCase):
 
 
 class StorageTest(unittest.TestCase):
+    def test_flatten_telemetry_includes_js_calculated_values_and_parameters(self):
+        telemetry = {
+            "sequence": 166,
+            "measurement": {"ax": -457.5, "az": 841.07, "gy": -16493.05},
+        }
+        physics = {
+            "mass_kg": 30.0,
+            "track_width_m": 0.47,
+            "cg_height_m": 0.25,
+            "roll_inertia_kg_m2": 0.0,
+            **compute_physics(30.0, 0.47, 0.25, 0.0),
+        }
+        row = flatten_telemetry(telemetry, physics)
+        self.assertAlmostEqual(row["calculated.ax_g"], -0.4575)
+        self.assertAlmostEqual(row["calculated.gy_deg_s"], -16.49305)
+        self.assertAlmostEqual(row["js.k1"], 1.15)
+        self.assertIsNotNone(row["calculated.si_js"])
+
     def test_sanitize_measurement_name(self):
         self.assertEqual(sanitize_measurement_name("../Prueba 01:*"), "Prueba_01")
         self.assertTrue(sanitize_measurement_name("   "))

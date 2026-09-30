@@ -1,2 +1,5 @@
 linux_receiver/Testing/
 
+# Local dashboard measurements are runtime data, not source files.
+windows_dashboard/measurements/
+

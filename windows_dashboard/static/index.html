@@ -8,6 +8,11 @@
 </head>
 <body>
   <main class="shell">
+    <nav class="view-tabs" aria-label="Modo de visualización">
+      <button id="liveTab" class="view-tab is-active" type="button" aria-selected="true">En directo</button>
+      <button id="historyTab" class="view-tab" type="button" aria-selected="false">Reproducir CSV</button>
+    </nav>
+
     <section class="topbar">
       <div>
         <h1>DOBACK UDP Dashboard</h1>
@@ -25,9 +30,10 @@
       <h2>Datos principales</h2>
       <div class="sensor-board">
         <article class="si-card">
-          <span>Índice de estabilidad</span>
+          <span>Índice de estabilidad calculado</span>
           <strong id="stabilityIndex">--</strong>
           <small>SI</small>
+          <small class="raw-si-reference">Firmware: <strong id="rawStabilityIndex">--</strong></small>
         </article>
 
         <article class="sensor-group acceleration">
@@ -65,6 +71,26 @@
           <strong id="yaw">--</strong>
           <small>grados</small>
         </article>
+      </div>
+    </section>
+
+    <section id="historyPanel" class="panel history-panel is-hidden" aria-labelledby="historyTitle">
+      <div class="section-heading">
+        <div>
+          <h2 id="historyTitle">Reproducción de una medición CSV</h2>
+          <p id="historyStatus">Selecciona un CSV para recorrer sus muestras localmente.</p>
+        </div>
+        <span id="historyTimestamp" class="history-timestamp">Sin muestra seleccionada</span>
+      </div>
+      <div class="history-toolbar">
+        <label class="file-picker">Cargar CSV<input id="csvFile" type="file" accept=".csv,text/csv"></label>
+        <button id="previousSample" type="button" disabled>← Anterior</button>
+        <button id="playSamples" type="button" disabled>▶ Reproducir</button>
+        <button id="nextSample" type="button" disabled>Siguiente →</button>
+      </div>
+      <div class="history-progress">
+        <label for="sampleSlider">Muestra <strong id="samplePosition">0 / 0</strong></label>
+        <input id="sampleSlider" type="range" min="0" max="0" value="0" disabled>
       </div>
     </section>
 

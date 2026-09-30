@@ -66,13 +66,23 @@ cd C:\ruta\a\esp_datareceiver\windows_dashboard
 python .\server.py
 ```
 
-Abre `http://127.0.0.1:8080`.
+En el mismo ordenador puedes abrir `http://127.0.0.1:8080`. El servidor escucha
+por defecto en todas las interfaces (`0.0.0.0`) para permitir el acceso desde
+una tablet conectada a la Wi-Fi del AGV.
+
+Para acceder desde la tablet:
+
+1. Conecta la tablet y el ordenador a la Wi-Fi del AGV.
+2. Ejecuta `ipconfig` y localiza la IPv4 del adaptador Wi-Fi del ordenador.
+3. Abre `http://IP_DEL_ORDENADOR:8080` en la tablet, por ejemplo
+   `http://192.168.8.100:8080`.
+4. Si Windows Firewall lo solicita, permite el acceso para redes privadas.
 
 Por defecto el panel aprende automáticamente la IP de la Jetson a partir del
 primer datagrama. También puedes fijarla o cambiar los puertos:
 
 ```powershell
-python .\server.py --http-port 8080 --udp-port 50100 --jetson-ip 192.168.8.174 --command-port 50101
+python .\server.py --http-host 0.0.0.0 --http-port 8080 --udp-port 50100 --jetson-ip 192.168.8.174 --command-port 50101
 ```
 
 Los CSV se guardan en `measurements/` por defecto. Puedes cambiarlo con
@@ -109,3 +119,22 @@ estos tres factores se mantienen en el panel para el cálculo visual.
 ```powershell
 python -m unittest discover -s tests
 ```
+## Reproducción histórica de CSV
+
+La pestaña **Reproducir CSV** permite cargar una medición desde el navegador y recorrerla muestra a muestra, hacia delante o hacia atrás, sin enviar el archivo al servidor. También incluye reproducción automática y un deslizador temporal.
+
+El lector detecta automáticamente CSV separados por comas o por punto y coma. Las columnas con formato `seccion.campo` se asignan a las mismas secciones de telemetría que usa el modo en directo (`measurement`, `orientation`, `gps` y `physics`). Por ejemplo:
+
+```text
+received_utc,measurement.ax,measurement.ay,measurement.az,orientation.gy,orientation.roll
+2026-09-29T11:17:54Z,0.01,0.03,1.01,42.5,-0.7
+```
+
+También se reconocen `doback_timestamp_utc` y `timestamp` como fecha de la muestra. El resto de la interfaz —acelerómetro, giroscopio en °/s, orientación, ecuación de estabilidad y términos estático/dinámico— se actualiza con la muestra seleccionada. El botón **En directo** devuelve el dashboard al flujo UDP normal.
+
+Los CSV guardados con **Guardar** conservan las columnas originales y añaden dos grupos calculados por el mismo contrato que usa el JavaScript:
+
+- `calculated.*`: sensores convertidos, `φ`, `φcrit`, `ωcrit`, penalizaciones y `si_js`.
+- `js.*`: parámetros activos usados por la ecuación (`k1`, `k2`, geometría, coeficiente e `αv`).
+
+Así se puede comparar el `measurement.si` recibido del firmware con `calculated.si_js`, que es el índice recalculado por el dashboard.

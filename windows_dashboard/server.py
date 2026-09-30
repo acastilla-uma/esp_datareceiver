@@ -115,9 +115,9 @@ class Recorder:
         self.started_at = datetime.now(timezone.utc).isoformat()
         self.active = True
 
-    def add(self, telemetry):
+    def add(self, telemetry, js_physics):
         if self.active:
-            self.rows.append(flatten_telemetry(telemetry))
+            self.rows.append(flatten_telemetry(telemetry, js_physics))
 
     def stop(self, name=None):
         if not self.active:
@@ -142,14 +142,20 @@ class AppState:
         self.jetson_ip = jetson_ip
         self.command_port = command_port
         self.last_command_status = ""
-        self.current_physics = None
+        self.current_physics = {
+            "mass_kg": 50.0,
+            "track_width_m": 0.47,
+            "cg_height_m": 0.25,
+            "roll_inertia_kg_m2": 0.0,
+            **compute_physics(50.0, 0.47, 0.25, 0.0),
+        }
 
     def update_telemetry(self, telemetry, sender_ip):
         with self.lock:
             self.last_telemetry = telemetry
             self.last_sender_ip = sender_ip
             self.last_seen_monotonic = time.monotonic()
-            self.recorder.add(self.last_telemetry)
+            self.recorder.add(self.last_telemetry, self.current_physics)
             self._broadcast_locked()
 
     def snapshot(self):
@@ -233,7 +239,71 @@ class AppState:
             self._broadcast_locked()
 
 
-def flatten_telemetry(telemetry):
+def _numeric(value):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _scaled_measurement(measurement, modern_keys, legacy_keys):
+    for key in modern_keys:
+        value = _numeric(measurement.get(key))
+        if value is not None:
+            return value
+    for key in legacy_keys:
+        value = _numeric(measurement.get(key))
+        if value is not None:
+            return value * 0.001
+    return None
+
+
+def js_stability_values(telemetry, js_physics):
+    """Mirror the browser's sensor conversions and stability equation in saved rows."""
+    measurement = telemetry.get("measurement") or {}
+    sensors = {
+        "ax_g": _scaled_measurement(measurement, ("ax_g", "accel_x_g", "acceleration_x_g"), ("ax", "accel_x", "acceleration_x")),
+        "ay_g": _scaled_measurement(measurement, ("ay_g", "accel_y_g", "acceleration_y_g"), ("ay", "accel_y", "acceleration_y")),
+        "az_g": _scaled_measurement(measurement, ("az_g", "accel_z_g", "acceleration_z_g"), ("az", "accel_z", "acceleration_z")),
+        "gx_deg_s": _scaled_measurement(measurement, ("gx_deg_s", "gyro_x_deg_s", "gyro_x"), ("gx",)),
+        "gy_deg_s": _scaled_measurement(measurement, ("gy_deg_s", "gy_avg_deg_s", "gyavg_deg_s", "gyro_y_deg_s", "gyro_y"), ("gyavg", "gy")),
+        "gz_deg_s": _scaled_measurement(measurement, ("gz_deg_s", "gyro_z_deg_s", "gyro_z"), ("gz",)),
+    }
+    physics = js_physics or {}
+    track_width = _numeric(physics.get("track_width_m"))
+    cg_height = _numeric(physics.get("cg_height_m"))
+    d1 = _numeric(physics.get("d1_m"))
+    coeff = _numeric(physics.get("coeff_si"))
+    alpha_v = _numeric(physics.get("alphav_deg"))
+    k1 = _numeric(physics.get("k1"))
+    k2 = _numeric(physics.get("k2"))
+    height = math.sqrt(d1**2 - (track_width / 2.0) ** 2) if d1 is not None and track_width is not None and d1**2 >= (track_width / 2.0) ** 2 else None
+    phi_rad = abs(math.atan(sensors["ax_g"] / sensors["az_g"])) if sensors["ax_g"] is not None and sensors["az_g"] not in (None, 0) else None
+    phi_crit_rad = math.atan((track_width / 2.0) / height) if track_width is not None and height and height > 0 else None
+    static_term = k1 * phi_rad / phi_crit_rad if k1 is not None and phi_rad is not None and phi_crit_rad and phi_crit_rad > 0 else None
+    omega_crit = math.sqrt(coeff * track_width * alpha_v / 4.0) * 360.0 / 6.28 if coeff is not None and track_width and track_width > 0 and alpha_v is not None and alpha_v >= 0 else None
+    omega = abs(sensors["gy_deg_s"]) if sensors["gy_deg_s"] is not None else None
+    dynamic_term = k2 * (omega / omega_crit) ** 2 if k2 is not None and omega is not None and omega_crit and omega_crit > 0 else None
+    calculated = {
+        **sensors,
+        "phi_deg": math.degrees(phi_rad) if phi_rad is not None else None,
+        "phi_crit_deg": math.degrees(phi_crit_rad) if phi_crit_rad is not None else None,
+        "omega_deg_s": omega,
+        "omega_crit_deg_s": omega_crit,
+        "static_term": static_term,
+        "dynamic_term": dynamic_term,
+        "si_js": 1.0 - static_term - dynamic_term if static_term is not None and dynamic_term is not None else None,
+    }
+    parameters = {key: physics.get(key) for key in (
+        "mass_kg", "track_width_m", "cg_height_m", "roll_inertia_kg_m2",
+        "alpha_margin_deg", "k1", "k2", "d1_m", "ixx_kg_m2", "fic_deg",
+        "coeff_si", "alfa_deg", "alphav_deg",
+    )}
+    return calculated, parameters
+
+
+def flatten_telemetry(telemetry, js_physics=None):
     row = {
         "received_utc": datetime.now(timezone.utc).isoformat(),
         "sequence": telemetry.get("sequence"),
@@ -244,6 +314,11 @@ def flatten_telemetry(telemetry):
         if isinstance(value, dict):
             for key, item in value.items():
                 row[f"{section}.{key}"] = item
+    calculated, parameters = js_stability_values(telemetry, js_physics)
+    for key, value in calculated.items():
+        row[f"calculated.{key}"] = value
+    for key, value in parameters.items():
+        row[f"js.{key}"] = value
     return row
 
 
@@ -300,7 +375,34 @@ def make_handler(state, static_dir):
             try:
                 if parsed.path == "/api/start":
                     data = parse_json_body(self)
+                    physics_override = None
+                    requested_physics = data.get("physics")
+                    if isinstance(requested_physics, dict):
+                        mass_kg = float(requested_physics["mass_kg"])
+                        track_width_m = float(requested_physics["track_width_m"])
+                        cg_height_m = float(requested_physics["cg_height_m"])
+                        roll_inertia_kg_m2 = float(requested_physics["roll_inertia_kg_m2"])
+                        alpha_margin_deg = float(requested_physics.get("alpha_margin_deg", 3.0))
+                        k1 = float(requested_physics.get("k1", 1.15))
+                        k2 = float(requested_physics.get("k2", 2.05))
+                        physics_override = {
+                            "mass_kg": mass_kg,
+                            "track_width_m": track_width_m,
+                            "cg_height_m": cg_height_m,
+                            "roll_inertia_kg_m2": roll_inertia_kg_m2,
+                            **compute_physics(
+                                mass_kg,
+                                track_width_m,
+                                cg_height_m,
+                                roll_inertia_kg_m2,
+                                alpha_margin_deg,
+                                k1,
+                                k2,
+                            ),
+                        }
                     with state.lock:
+                        if physics_override is not None:
+                            state.current_physics = physics_override
                         state.recorder.start(str(data.get("name", "")))
                         state._broadcast_locked()
                     self.send_json({"ok": True})
@@ -413,7 +515,11 @@ def udp_listener(host, port, state, stop):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Panel HTML local para DOBACK por UDP.")
-    parser.add_argument("--http-host", default="127.0.0.1")
+    parser.add_argument(
+        "--http-host",
+        default="0.0.0.0",
+        help="Interfaz HTTP donde escucha el dashboard (0.0.0.0 permite acceso desde la Wi-Fi del AGV).",
+    )
     parser.add_argument("--http-port", type=int, default=DEFAULT_HTTP_PORT)
     parser.add_argument("--udp-host", default="0.0.0.0")
     parser.add_argument("--udp-port", type=int, default=DEFAULT_TELEMETRY_PORT)

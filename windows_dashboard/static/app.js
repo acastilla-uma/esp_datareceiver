@@ -2,6 +2,10 @@ const state = {
   latest: null,
   lastEventAt: 0,
   pollInFlight: false,
+  viewMode: "live",
+  historyRows: [],
+  historyIndex: 0,
+  playbackTimer: null,
 };
 
 const el = (id) => document.getElementById(id);
@@ -43,6 +47,71 @@ function measurementValue(measurement, aliases) {
     wanted.has(normalizedKey(key))
   );
   return match ? match[1] : null;
+}
+
+function parseCsv(text) {
+  const delimiter = (text.split(/\r?\n/, 1)[0].match(/;/g) || []).length >
+    (text.split(/\r?\n/, 1)[0].match(/,/g) || []).length ? ";" : ",";
+  const rows = [];
+  let row = [];
+  let field = "";
+  let quoted = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    const next = text[index + 1];
+    if (character === '"') {
+      if (quoted && next === '"') {
+        field += '"';
+        index += 1;
+      } else {
+        quoted = !quoted;
+      }
+    } else if (character === delimiter && !quoted) {
+      row.push(field);
+      field = "";
+    } else if ((character === "\n" || character === "\r") && !quoted) {
+      if (character === "\r" && next === "\n") index += 1;
+      row.push(field);
+      if (row.some((value) => value.trim() !== "")) rows.push(row);
+      row = [];
+      field = "";
+    } else {
+      field += character;
+    }
+  }
+  if (field !== "" || row.length) {
+    row.push(field);
+    if (row.some((value) => value.trim() !== "")) rows.push(row);
+  }
+  if (rows.length < 2) throw new Error("El CSV no contiene una cabecera y muestras válidas.");
+
+  const headers = rows[0].map((header, index) =>
+    header.replace(/^\uFEFF/, "").trim() || `columna_${index + 1}`,
+  );
+  return rows.slice(1).map((values) => Object.fromEntries(
+    headers.map((header, index) => [header, (values[index] || "").trim()])
+  )).filter((record) => Object.values(record).some((value) => value !== ""));
+}
+
+function csvRowToSnapshot(row, index, total) {
+  const telemetry = {measurement: {}, orientation: {}, gps: {}, physics: {}};
+  Object.entries(row).forEach(([key, value]) => {
+    const separator = key.indexOf(".");
+    if (separator < 0) return;
+    const section = key.slice(0, separator);
+    const field = key.slice(separator + 1);
+    if (Object.prototype.hasOwnProperty.call(telemetry, section)) telemetry[section][field] = value;
+  });
+  const timestamp = row.doback_timestamp_utc || row.received_utc || row.timestamp || `Muestra ${index + 1}`;
+  return {
+    telemetry,
+    age_s: null,
+    recording: false,
+    recorded_rows: total,
+    last_command_status: "CSV histórico",
+    historyTimestamp: timestamp,
+  };
 }
 
 function scaledMeasurementValue(measurement, modernAliases, legacyAliases, legacyScale) {
@@ -97,7 +166,7 @@ function setPrimarySensors(measurement) {
   el("gyroX").textContent = fmt(sensors.gxDegS, 3);
   el("gyroY").textContent = fmt(sensors.gyDegS, 3);
   el("gyroZ").textContent = fmt(sensors.gzDegS, 3);
-  el("stabilityIndex").textContent = fmt(
+  el("rawStabilityIndex").textContent = fmt(
     measurementValue(measurement, ["si", "stability_index", "indice_estabilidad"]),
     3
   );
@@ -151,6 +220,7 @@ function calculateStability(sensors, physics) {
 function renderStabilityEquation(sensors, rawPhysics) {
   const physics = resolvedPhysics(rawPhysics);
   const result = calculateStability(sensors, physics);
+  el("stabilityIndex").textContent = fmt(result.si, 3);
   el("calculatedStabilityIndex").textContent = fmt(result.si, 3);
   el("staticPenalty").textContent = fmt(result.staticTerm, 4);
   el("dynamicPenalty").textContent = fmt(result.dynamicTerm, 4);
@@ -182,10 +252,15 @@ function render(snapshot) {
   const age = snapshot.age_s;
   const online = typeof age === "number" && age < 3;
 
-  el("connection").textContent = online
-    ? `Recibiendo datos, última muestra hace ${age.toFixed(1)} s`
-    : "Esperando telemetría UDP...";
-  el("connection").className = online ? "online" : "stale";
+  if (state.viewMode === "history") {
+    el("connection").textContent = "Reproduciendo una muestra histórica del CSV";
+    el("connection").className = "online";
+  } else {
+    el("connection").textContent = online
+      ? `Recibiendo datos, última muestra hace ${age.toFixed(1)} s`
+      : "Esperando telemetría UDP...";
+    el("connection").className = online ? "online" : "stale";
+  }
 
   const sensors = setPrimarySensors(measurement);
   el("roll").textContent = fmt(orientation.roll_deg, 2);
@@ -214,7 +289,75 @@ function render(snapshot) {
   setCells(el("measurement"), measurement);
 }
 
+function updateHistoryControls() {
+  const total = state.historyRows.length;
+  const hasRows = total > 0;
+  const atStart = state.historyIndex <= 0;
+  const atEnd = state.historyIndex >= total - 1;
+  el("sampleSlider").disabled = !hasRows;
+  el("sampleSlider").max = String(Math.max(total - 1, 0));
+  el("sampleSlider").value = String(hasRows ? state.historyIndex : 0);
+  el("samplePosition").textContent = hasRows ? `${state.historyIndex + 1} / ${total}` : "0 / 0";
+  el("previousSample").disabled = !hasRows || atStart;
+  el("nextSample").disabled = !hasRows || atEnd;
+  el("playSamples").disabled = !hasRows;
+  el("playSamples").textContent = state.playbackTimer ? "Ⅱ Pausar" : "▶ Reproducir";
+}
+
+function renderHistoryFrame() {
+  if (!state.historyRows.length) return;
+  const frame = state.historyRows[state.historyIndex];
+  render(frame);
+  el("historyTimestamp").textContent = frame.historyTimestamp;
+  updateHistoryControls();
+}
+
+function stopPlayback() {
+  if (state.playbackTimer) window.clearInterval(state.playbackTimer);
+  state.playbackTimer = null;
+  updateHistoryControls();
+}
+
+function setViewMode(mode) {
+  state.viewMode = mode;
+  if (mode === "live") {
+    stopPlayback();
+    el("liveTab").classList.add("is-active");
+    el("historyTab").classList.remove("is-active");
+    el("liveTab").setAttribute("aria-selected", "true");
+    el("historyTab").setAttribute("aria-selected", "false");
+    el("historyPanel").classList.add("is-hidden");
+    fetchState();
+  } else {
+    el("liveTab").classList.remove("is-active");
+    el("historyTab").classList.add("is-active");
+    el("liveTab").setAttribute("aria-selected", "false");
+    el("historyTab").setAttribute("aria-selected", "true");
+    el("historyPanel").classList.remove("is-hidden");
+    if (state.historyRows.length) renderHistoryFrame();
+  }
+}
+
+async function loadCsv(file) {
+  stopPlayback();
+  try {
+    const rows = parseCsv(await file.text());
+    state.historyRows = rows.map((row, index) => csvRowToSnapshot(row, index, rows.length));
+    state.historyIndex = 0;
+    el("historyStatus").textContent = `${file.name}: ${rows.length} muestras cargadas localmente.`;
+    setViewMode("history");
+    renderHistoryFrame();
+  } catch (error) {
+    state.historyRows = [];
+    state.historyIndex = 0;
+    updateHistoryControls();
+    el("historyStatus").textContent = error.message || "No se pudo leer el CSV.";
+    el("historyTimestamp").textContent = "Sin muestra seleccionada";
+  }
+}
+
 async function fetchState() {
+  if (state.viewMode === "history") return;
   if (state.pollInFlight) return;
   state.pollInFlight = true;
   try {
@@ -227,6 +370,42 @@ async function fetchState() {
     state.pollInFlight = false;
   }
 }
+
+el("liveTab").addEventListener("click", () => setViewMode("live"));
+el("historyTab").addEventListener("click", () => setViewMode("history"));
+el("csvFile").addEventListener("change", (event) => {
+  const [file] = event.currentTarget.files;
+  if (file) loadCsv(file);
+});
+el("previousSample").addEventListener("click", () => {
+  state.historyIndex = Math.max(0, state.historyIndex - 1);
+  renderHistoryFrame();
+});
+el("nextSample").addEventListener("click", () => {
+  state.historyIndex = Math.min(state.historyRows.length - 1, state.historyIndex + 1);
+  renderHistoryFrame();
+});
+el("sampleSlider").addEventListener("input", (event) => {
+  state.historyIndex = Number(event.currentTarget.value);
+  renderHistoryFrame();
+});
+el("playSamples").addEventListener("click", () => {
+  if (state.playbackTimer) {
+    stopPlayback();
+    return;
+  }
+  if (!state.historyRows.length) return;
+  if (state.historyIndex >= state.historyRows.length - 1) state.historyIndex = 0;
+  state.playbackTimer = window.setInterval(() => {
+    if (state.historyIndex >= state.historyRows.length - 1) {
+      stopPlayback();
+      return;
+    }
+    state.historyIndex += 1;
+    renderHistoryFrame();
+  }, 250);
+  updateHistoryControls();
+});
 
 async function postJson(url, payload = {}) {
   const response = await fetch(url, {
@@ -247,7 +426,7 @@ function measurementName() {
 
 el("startBtn").addEventListener("click", async () => {
   try {
-    await postJson("/api/start", {name: measurementName()});
+    await postJson("/api/start", {name: measurementName(), physics: configValues()});
   } catch (error) {
     alert(error.message);
   }
@@ -289,6 +468,7 @@ fetchState();
 
 const events = new EventSource("/events");
 events.onmessage = (event) => {
+  if (state.viewMode === "history") return;
   try {
     render(JSON.parse(event.data));
     state.lastEventAt = Date.now();
