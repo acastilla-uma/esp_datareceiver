@@ -66,6 +66,10 @@ cd C:\ruta\a\esp_datareceiver\windows_dashboard
 python .\server.py
 ```
 
+También puedes ejecutar `start_dashboard.bat`. El lanzador muestra en la
+consola las IPv4 detectadas del PC y las URLs completas que puedes abrir en la
+tablet.
+
 En el mismo ordenador puedes abrir `http://127.0.0.1:8080`. El servidor escucha
 por defecto en todas las interfaces (`0.0.0.0`) para permitir el acceso desde
 una tablet conectada a la Wi-Fi del AGV.
@@ -76,7 +80,12 @@ Para acceder desde la tablet:
 2. Ejecuta `ipconfig` y localiza la IPv4 del adaptador Wi-Fi del ordenador.
 3. Abre `http://IP_DEL_ORDENADOR:8080` en la tablet, por ejemplo
    `http://192.168.8.100:8080`.
-4. Si Windows Firewall lo solicita, permite el acceso para redes privadas.
+4. Crea una regla de Firewall para el puerto 8080. Como la Wi-Fi del AGV
+   puede aparecer como red pública, abre PowerShell como administrador y ejecuta:
+
+```powershell
+New-NetFirewallRule -DisplayName "DOBACK UDP Dashboard 8080" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8080 -Profile Any
+```
 
 Por defecto el panel aprende automáticamente la IP de la Jetson a partir del
 primer datagrama. También puedes fijarla o cambiar los puertos:
