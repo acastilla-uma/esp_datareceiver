@@ -3,3 +3,11 @@ linux_receiver/Testing/
 # Local dashboard measurements are runtime data, not source files.
 windows_dashboard/measurements/
 
+# Local NTRIP credentials must never be committed.
+linux_receiver/ntrip.env
+linux_receiver/.env
+
+# Python bytecode is generated locally by dashboard tests/runtime.
+__pycache__/
+*.pyc
+

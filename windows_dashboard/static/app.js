@@ -9,6 +9,7 @@ const state = {
 };
 
 const el = (id) => document.getElementById(id);
+const core = window.DobackCore;
 
 const FEATURED_KEYS = new Set([
   "ax", "ay", "az",
@@ -21,19 +22,11 @@ const FEATURED_KEYS = new Set([
 ]);
 
 function normalizedKey(value) {
-  return String(value)
-    .trim()
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]/g, "");
+  return core.normalizedKey(value);
 }
 
 function numericValue(value) {
-  if (typeof value === "number") return Number.isFinite(value) ? value : null;
-  if (typeof value !== "string" || value.trim() === "") return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+  return core.numericValue(value);
 }
 
 function fmt(value, digits = 3) {
@@ -47,71 +40,6 @@ function measurementValue(measurement, aliases) {
     wanted.has(normalizedKey(key))
   );
   return match ? match[1] : null;
-}
-
-function parseCsv(text) {
-  const delimiter = (text.split(/\r?\n/, 1)[0].match(/;/g) || []).length >
-    (text.split(/\r?\n/, 1)[0].match(/,/g) || []).length ? ";" : ",";
-  const rows = [];
-  let row = [];
-  let field = "";
-  let quoted = false;
-
-  for (let index = 0; index < text.length; index += 1) {
-    const character = text[index];
-    const next = text[index + 1];
-    if (character === '"') {
-      if (quoted && next === '"') {
-        field += '"';
-        index += 1;
-      } else {
-        quoted = !quoted;
-      }
-    } else if (character === delimiter && !quoted) {
-      row.push(field);
-      field = "";
-    } else if ((character === "\n" || character === "\r") && !quoted) {
-      if (character === "\r" && next === "\n") index += 1;
-      row.push(field);
-      if (row.some((value) => value.trim() !== "")) rows.push(row);
-      row = [];
-      field = "";
-    } else {
-      field += character;
-    }
-  }
-  if (field !== "" || row.length) {
-    row.push(field);
-    if (row.some((value) => value.trim() !== "")) rows.push(row);
-  }
-  if (rows.length < 2) throw new Error("El CSV no contiene una cabecera y muestras válidas.");
-
-  const headers = rows[0].map((header, index) =>
-    header.replace(/^\uFEFF/, "").trim() || `columna_${index + 1}`,
-  );
-  return rows.slice(1).map((values) => Object.fromEntries(
-    headers.map((header, index) => [header, (values[index] || "").trim()])
-  )).filter((record) => Object.values(record).some((value) => value !== ""));
-}
-
-function csvRowToSnapshot(row, index, total) {
-  const telemetry = {measurement: {}, orientation: {}, gps: {}, physics: {}};
-  Object.entries(row).forEach(([key, value]) => {
-    const separator = key.indexOf(".");
-    if (separator < 0) return;
-    const section = key.slice(0, separator);
-    const field = key.slice(separator + 1);
-    if (Object.prototype.hasOwnProperty.call(telemetry, section)) telemetry[section][field] = value;
-  });
-  const timestamp = row.doback_timestamp_utc || row.received_utc || row.timestamp || `Muestra ${index + 1}`;
-  return {
-    telemetry,
-    age_s: null,
-    recording: false,
-    recorded_rows: total,
-    last_command_status: "CSV histórico",
-    historyTimestamp: timestamp,
-  };
 }
 
 function scaledMeasurementValue(measurement, modernAliases, legacyAliases, legacyScale) {
@@ -156,6 +84,18 @@ function setCells(container, values) {
     cell.append(label, strong);
     container.append(cell);
   });
+}
+
+function renderGnss(snapshot) {
+  const gnss = core.gnssSnapshot(snapshot);
+  el("gnssBadge").textContent = gnss.label;
+  el("gnssBadge").className = gnss.badgeClass;
+  el("gnssDetail").textContent = gnss.detail;
+  setDl(el("gnssOverview"), gnss.overview);
+  setDl(el("gnssPosition"), gnss.position);
+  setDl(el("gnssPrecision"), gnss.precision);
+  setDl(el("gnssMotion"), gnss.motion);
+  setDl(el("gnssConnectivity"), gnss.connectivity);
 }
 
 function setPrimarySensors(measurement) {
@@ -275,7 +215,7 @@ function render(snapshot) {
   el("startBtn").disabled = !!snapshot.recording;
   el("stopBtn").disabled = !snapshot.recording;
 
-  setDl(el("gpsList"), telemetry.gps || {});
+  renderGnss(snapshot);
   const physics = snapshot.physics || telemetry.physics || {};
   const resolved = renderStabilityEquation(sensors, physics);
   setDl(el("physicsList"), {
@@ -341,8 +281,8 @@ function setViewMode(mode) {
 async function loadCsv(file) {
   stopPlayback();
   try {
-    const rows = parseCsv(await file.text());
-    state.historyRows = rows.map((row, index) => csvRowToSnapshot(row, index, rows.length));
+    const rows = core.parseCsv(await file.text());
+    state.historyRows = rows.map((row, index) => core.csvRowToSnapshot(row, index, rows.length));
     state.historyIndex = 0;
     el("historyStatus").textContent = `${file.name}: ${rows.length} muestras cargadas localmente.`;
     setViewMode("history");

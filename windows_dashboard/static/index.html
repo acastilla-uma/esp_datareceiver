@@ -128,9 +128,33 @@
     </section>
 
     <section class="grid two secondary">
-      <article class="panel">
-        <h2>GPS</h2>
-        <dl id="gpsList"></dl>
+      <article class="panel gnss-panel" aria-labelledby="gnssTitle">
+        <div class="section-heading gnss-heading">
+          <div>
+            <h2 id="gnssTitle">GNSS / RTK</h2>
+            <p id="gnssDetail">Esperando receptor simpleRTK2B.</p>
+          </div>
+          <span id="gnssBadge" class="gnss-badge gnss-disconnected">Sin GNSS</span>
+        </div>
+        <dl id="gnssOverview" class="gnss-overview"></dl>
+        <div class="gnss-grid">
+          <section aria-labelledby="gnssPositionTitle">
+            <h3 id="gnssPositionTitle">Posición</h3>
+            <dl id="gnssPosition"></dl>
+          </section>
+          <section aria-labelledby="gnssPrecisionTitle">
+            <h3 id="gnssPrecisionTitle">Precisión</h3>
+            <dl id="gnssPrecision"></dl>
+          </section>
+          <section aria-labelledby="gnssMotionTitle">
+            <h3 id="gnssMotionTitle">Movimiento y corrección</h3>
+            <dl id="gnssMotion"></dl>
+          </section>
+          <section aria-labelledby="gnssConnectivityTitle">
+            <h3 id="gnssConnectivityTitle">Conectividad</h3>
+            <dl id="gnssConnectivity"></dl>
+          </section>
+        </div>
       </article>
       <article class="panel">
         <h2>Registro</h2>
@@ -162,6 +186,7 @@
       <div id="measurement" class="details-grid"></div>
     </section>
   </main>
+  <script src="/app_core.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

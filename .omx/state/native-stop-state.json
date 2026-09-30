@@ -19,6 +19,16 @@
         "last_turn_id": "01a0f288-ab55-7053-87cd-024c6b154090",
         "last_thread_id": null
       }
+    },
+    "01a0f299-683f-7de1-9138-f2e43f11dc6b": {
+      "ordinary_no_progress_guard": {
+        "fingerprint": "ordinary|integración simplertk2b/rtk planificada e implementada. - eliminado completamente el gps anterior: `gps_process.*`, `gps_csg` y parser json heredado. - lectura directa usb del zed-f9p mediante ubx/nmea a 5 hz. - cliente ntrip en la jetson con ign españa por defecto: `ergnss-tr.ign.es:2101/vrs3m`. - envío gga al caster y reenvío rtcm al receptor por usb. - reconexión automática usb y ntrip. - asociación estabilidad–gnss por muestra más cercana, con límite inclusivo de ±200 ms. - la estabilidad continúa aunque falten gnss, internet o correcciones. - dashboard y terminal muestran posición, rtk fixed/float, precisión, dop, satélites, correcciones, rtcm, usb, ntrip e interferencias. - csv incorpora `gps.*` y `gnss_status.*`, enlazados con cada medición. - diagnóstico rtcm: tipo, crc, uso por el receptor y contador. - credenciales excluidas de git. - eliminados cuatro archivos `.pyc` generados; ahora están ignorados. documentación principal: - [plan técnico](/home/agilex/documents/phdalex/esp_datareceiver/.omx/plans/prd-integracion-simplertk2b.md) - [receptor linux](/home/agilex/documents/phdalex/esp_datareceiver/linux_receiver/readme.md) - [guía completa](/home/agilex/documents/phdalex/esp_datareceiver/linux_receiver/guia_completa.md) - [dashboard](/home/agilex/documents/phdalex/esp_datareceiver/windows_dashboard/readme.md) - [plantilla ntrip](/home/agilex/documents/phdalex/esp_datareceiver/linux_receiver/ntrip.env.example) verificación realizada: - compilación c++ limpia. - ctest: 5/5 pruebas superadas. - dashboard python: 8/8 pruebas superadas. - pruebas javascript y sintaxis: correctas. - revisión independiente final: aprobada sin hallazgos. - sin credenciales reales detectadas. para ejecutarlo: ```bash cd /home/agilex/documents/phdalex/esp_datareceiver/linux_receiver cp ntrip.env.example ntrip.env chmod 600 ntrip.env # editar ntrip.env con las credenciales registradas en ign source ntrip.env ./build/esp32_receiver --esp-port auto --gnss-port /dev/serial/by-id/ruta_del_zed_f9p ``` la única validación pendiente es la prueba física con la simplertk2b, sus credenciales ign reales y cielo abierto; el entorno actual no expuso ningún dispositivo usb gnss. los cambios preexistentes de `.omx/state` y `package-lock.json` no fueron modificados.",
+        "first_seen_at": "2026-09-30T15:31:50.425Z",
+        "last_seen_at": "2026-09-30T15:31:50.425Z",
+        "repeat_count": 1,
+        "last_turn_id": "01a0f2ad-3394-7a10-a432-db86592a38eb",
+        "last_thread_id": null
+      }
     }
   }
 }

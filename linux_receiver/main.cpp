@@ -4,13 +4,16 @@
 #include <cctype>
 #include <chrono>
 #include <csignal>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <deque>
 #include <fcntl.h>
 #include <glob.h>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <optional>
 #include <poll.h>
 #include <set>
@@ -23,9 +26,11 @@
 #include <utility>
 #include <vector>
 
+#include "gnss_receiver.h"
 #include "gps_matcher.h"
-#include "gps_process.h"
+#include "ntrip_client.h"
 #include "serial_format.h"
+#include "udp_gateway.h"
 
 namespace {
 
@@ -46,14 +51,23 @@ const std::vector<std::string> DEFAULT_FIELDS{
 
 const std::vector<std::string> GPS_FIELDS{
     "doback_timestamp_utc", "gps_timestamp_utc", "gps_delta_ms",
-    "latitude", "longitude", "gps_fix_type", "gps_num_sats"
+    "latitude", "longitude", "gps_fix", "gps_rtk", "gps_h_acc_m",
+    "gps_num_sats", "ntrip_state", "rtcm_age_ms"
 };
 
 struct Options {
-    std::string serialPort{"auto"};
-    std::string gpsScript{"/home/agilex/Documents/PhDAlex/GPS_CSG/gps_realtime.py"};
-    std::string gpsDevice;
-    std::chrono::milliseconds gpsMaximumDifference{10000};
+    std::string espPort{"auto"};
+    std::string gnssPort{"auto"};
+    std::chrono::milliseconds gpsMaximumDifference{200};
+    bool gnssEnabled{true};
+    bool ntripEnabled{true};
+    std::string ntripHost{"ergnss-tr.ign.es"};
+    int ntripPort{2101};
+    std::string ntripMountpoint{"VRS3M"};
+    bool udpEnabled{true};
+    std::string udpHost{"192.168.8.20"};
+    std::uint16_t udpTelemetryPort{50100};
+    std::uint16_t udpCommandPort{50101};
 };
 
 void signalHandler(int) {
@@ -161,8 +175,12 @@ std::string friendlyFieldName(const std::string& field) {
     if (key == "gps_delta_ms") return "Diferencia DOBACK-GPS [ms]";
     if (key == "latitude") return "Latitud GPS";
     if (key == "longitude") return "Longitud GPS";
-    if (key == "gps_fix_type") return "Tipo de fix GPS";
+    if (key == "gps_fix") return "Solución GNSS";
+    if (key == "gps_rtk") return "Estado RTK";
+    if (key == "gps_h_acc_m") return "Precisión horizontal [m]";
     if (key == "gps_num_sats") return "Satélites GPS";
+    if (key == "ntrip_state") return "Estado NTRIP";
+    if (key == "rtcm_age_ms") return "Edad RTCM [ms]";
     return field;
 }
 
@@ -177,13 +195,32 @@ std::string currentTime() {
 
 void printUsage(const char* program) {
     std::cout
-        << "Uso: " << program << " [auto|PUERTO] [opciones]\n\n"
-        << "Opciones GPS:\n"
-        << "  --gps-script RUTA       Ruta a GPS_CSG/gps_realtime.py\n"
-        << "  --gps-device ID         Filtra device_id en gps_points\n"
-        << "  --gps-max-delta-ms N    Diferencia temporal máxima (10000 ms)\n"
-        << "  --no-gps                Desactiva GPS aunque el script de arranque lo configure\n"
+        << "Uso: " << program << " [auto|PUERTO_ESP32] [opciones]\n\n"
+        << "Puertos:\n"
+        << "  --esp-port RUTA         Puerto ESP32 o 'auto'\n"
+        << "  --gnss-port RUTA        Puerto simpleRTK2B o 'auto'\n"
+        << "  --no-gnss               Ejecuta sin receptor GNSS\n"
+        << "NTRIP (credenciales en NTRIP_USERNAME/NTRIP_PASSWORD):\n"
+        << "  --ntrip-host HOST       Caster (ergnss-tr.ign.es)\n"
+        << "  --ntrip-port N          Puerto (2101)\n"
+        << "  --ntrip-mountpoint ID   Punto de montaje (VRS3M)\n"
+        << "  --no-ntrip              No solicitar correcciones\n"
+        << "UDP:\n"
+        << "  --udp-host IP           IP del dashboard Windows (192.168.8.20)\n"
+        << "  --udp-port N            Puerto de telemetría (50100)\n"
+        << "  --udp-command-port N    Puerto de comandos (50101)\n"
+        << "  --no-udp                Solo interfaz de terminal\n"
         << "  -h, --help              Muestra esta ayuda\n";
+}
+
+std::optional<std::uint16_t> parsePort(const std::string& text) {
+    try {
+        const long value = std::stol(text);
+        if (value < 1 || value > 65535) return std::nullopt;
+        return static_cast<std::uint16_t>(value);
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
 }
 
 std::optional<Options> parseOptions(int argc, char* argv[]) {
@@ -195,33 +232,46 @@ std::optional<Options> parseOptions(int argc, char* argv[]) {
             printUsage(argv[0]);
             return std::nullopt;
         }
-        if (argument == "--no-gps") {
-            options.gpsScript.clear();
+        if (argument == "--no-gnss") {
+            options.gnssEnabled = false;
             continue;
         }
-        if (argument == "--gps-script" || argument == "--gps-device" ||
-            argument == "--gps-max-delta-ms") {
+        if (argument == "--no-ntrip") {
+            options.ntripEnabled = false;
+            continue;
+        }
+        if (argument == "--no-udp") {
+            options.udpEnabled = false;
+            continue;
+        }
+        if (argument == "--esp-port" || argument == "--gnss-port" ||
+            argument == "--ntrip-host" || argument == "--ntrip-port" ||
+            argument == "--ntrip-mountpoint" || argument == "--udp-host" ||
+            argument == "--udp-port" || argument == "--udp-command-port") {
             if (++index >= argc) {
                 std::cerr << "Falta el valor de " << argument << ".\n";
                 return std::nullopt;
             }
             const std::string value = argv[index];
-            if (argument == "--gps-script") {
-                options.gpsScript = value;
-            } else if (argument == "--gps-device") {
-                options.gpsDevice = value;
+            if (argument == "--esp-port") {
+                options.espPort = value;
+            } else if (argument == "--gnss-port") {
+                options.gnssPort = value;
+            } else if (argument == "--ntrip-host") {
+                options.ntripHost = value;
+            } else if (argument == "--ntrip-mountpoint") {
+                options.ntripMountpoint = value;
+            } else if (argument == "--udp-host") {
+                options.udpHost = value;
             } else {
-                try {
-                    const long long milliseconds = std::stoll(value);
-                    if (milliseconds < 0) {
-                        throw std::out_of_range("negative");
-                    }
-                    options.gpsMaximumDifference =
-                        std::chrono::milliseconds(milliseconds);
-                } catch (const std::exception&) {
-                    std::cerr << "--gps-max-delta-ms debe ser un entero no negativo.\n";
+                const auto port = parsePort(value);
+                if (!port) {
+                    std::cerr << argument << " debe estar entre 1 y 65535.\n";
                     return std::nullopt;
                 }
+                if (argument == "--ntrip-port") options.ntripPort = *port;
+                if (argument == "--udp-port") options.udpTelemetryPort = *port;
+                if (argument == "--udp-command-port") options.udpCommandPort = *port;
             }
             continue;
         }
@@ -233,10 +283,36 @@ std::optional<Options> parseOptions(int argc, char* argv[]) {
             std::cerr << "Solo se puede indicar un puerto serial.\n";
             return std::nullopt;
         }
-        options.serialPort = argument;
+        options.espPort = argument;
         serialPortSeen = true;
     }
     return options;
+}
+
+std::optional<double> measurementValue(
+    const std::vector<std::string>& fields,
+    const std::vector<std::string>& values,
+    const std::vector<std::string>& candidates) {
+    for (std::size_t index = 0; index < fields.size() && index < values.size(); ++index) {
+        const std::string field = lowercase(trim(fields[index]));
+        if (std::find(candidates.begin(), candidates.end(), field) == candidates.end()) {
+            continue;
+        }
+        char* end = nullptr;
+        const double value = std::strtod(values[index].c_str(), &end);
+        if (end != values[index].c_str() && *end == '\0') return value;
+    }
+    return std::nullopt;
+}
+
+std::optional<udp_gateway::Orientation> measurementOrientation(
+    const std::vector<std::string>& fields,
+    const std::vector<std::string>& values) {
+    const auto roll = measurementValue(fields, values, {"roll", "roll_deg"});
+    const auto pitch = measurementValue(fields, values, {"pitch", "pitch_deg"});
+    const auto yaw = measurementValue(fields, values, {"yaw", "yaw_deg"});
+    if (!roll || !pitch || !yaw) return std::nullopt;
+    return udp_gateway::Orientation{*roll, *pitch, *yaw};
 }
 
 std::vector<std::string> displayFields(const std::vector<std::string>& fields,
@@ -259,7 +335,8 @@ std::vector<std::string> displayValues(
     const std::optional<std::chrono::system_clock::time_point>& dobackTimestamp,
     const GpsMatcher& gpsMatcher,
     std::chrono::milliseconds maximumDifference,
-    bool gpsEnabled) {
+    bool gpsEnabled,
+    const NtripStatus& ntripStatus) {
     if (values.empty() || !gpsEnabled || !dobackTimestamp) {
         return values;
     }
@@ -268,15 +345,30 @@ std::vector<std::string> displayValues(
     result.push_back(formatUtcTimestamp(*dobackTimestamp));
     const auto match = gpsMatcher.nearest(*dobackTimestamp, maximumDifference);
     if (!match) {
-        result.insert(result.end(), {"—", "—", "—", "—", "—", "—"});
-        return result;
+        result.insert(result.end(), {"—", "—", "—", "—", "NO_FIX",
+                                     "NONE", "—", "—"});
+    } else {
+        result.push_back(match->sample.timestampUtc);
+        result.push_back(std::to_string(match->deltaMilliseconds));
+        result.push_back(match->sample.latitudeDeg
+                             ? decimal(*match->sample.latitudeDeg, 7)
+                             : "—");
+        result.push_back(match->sample.longitudeDeg
+                             ? decimal(*match->sample.longitudeDeg, 7)
+                             : "—");
+        result.push_back(match->sample.fix);
+        result.push_back(match->sample.rtk);
+        result.push_back(match->sample.hAccM ? decimal(*match->sample.hAccM, 3) : "—");
+        result.push_back(std::to_string(match->sample.numSats));
     }
-    result.push_back(match->sample.timestampUtc);
-    result.push_back(std::to_string(match->deltaMilliseconds));
-    result.push_back(decimal(match->sample.latitude, 7));
-    result.push_back(decimal(match->sample.longitude, 7));
-    result.push_back(std::to_string(match->sample.fixType));
-    result.push_back(std::to_string(match->sample.satellites));
+    result.push_back(ntripStateToString(ntripStatus.state));
+    if (ntripStatus.lastRtcmSteady) {
+        const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - *ntripStatus.lastRtcmSteady);
+        result.push_back(std::to_string(age.count()));
+    } else {
+        result.push_back("—");
+    }
     return result;
 }
 
@@ -420,6 +512,41 @@ std::vector<std::string> findSerialPorts() {
     return ports;
 }
 
+std::string resolvedDevice(const std::string& path) {
+    char* resolved = realpath(path.c_str(), nullptr);
+    if (!resolved) return path;
+    const std::string result(resolved);
+    std::free(resolved);
+    return result;
+}
+
+bool sameDevice(const std::string& left, const std::string& right) {
+    return !left.empty() && !right.empty() && resolvedDevice(left) == resolvedDevice(right);
+}
+
+bool isLikelyGnssPort(const std::string& path) {
+    const std::string key = lowercase(path);
+    return key.find("u-blox") != std::string::npos ||
+           key.find("ublox") != std::string::npos ||
+           key.find("zed-f9") != std::string::npos ||
+           key.find("ardusimple") != std::string::npos;
+}
+
+bool isLikelyEspPort(const std::string& path) {
+    const std::string key = lowercase(path);
+    return key.find("ch340") != std::string::npos ||
+           key.find("ch341") != std::string::npos ||
+           key.find("1a86") != std::string::npos ||
+           key.find("cp210") != std::string::npos ||
+           key.find("esp32") != std::string::npos ||
+           key.find("/dev/ttyusb") != std::string::npos;
+}
+
+std::string detectGnssPort(const std::vector<std::string>& ports) {
+    const auto found = std::find_if(ports.begin(), ports.end(), isLikelyGnssPort);
+    return found == ports.end() ? std::string{} : *found;
+}
+
 int setupSerial(const std::string& portname) {
     const int fd = open(portname.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
     if (fd < 0) {
@@ -467,6 +594,38 @@ void printDetectedPorts(const std::vector<std::string>& ports) {
     }
 }
 
+GpsSample matcherSample(const GnssSample& source) {
+    GpsSample sample;
+    sample.timestamp = source.timestamp;
+    sample.timestampUtc = source.timestampUtc;
+    sample.latitudeDeg = source.latitudeDeg;
+    sample.longitudeDeg = source.longitudeDeg;
+    sample.heightEllipsoidM = source.heightEllipsoidM;
+    sample.heightMslM = source.heightMslM;
+    sample.hAccM = source.hAccM;
+    sample.vAccM = source.vAccM;
+    sample.speedMS = source.speedMS;
+    sample.headingDeg = source.headingDeg;
+    sample.fix = gnssFixToString(source.fix);
+    sample.fixType = source.fixType;
+    sample.rtk = rtkStateToString(source.rtk);
+    sample.numSats = source.numSats;
+    sample.pdop = source.pdop;
+    sample.hdop = source.hdop;
+    sample.vdop = source.vdop;
+    sample.correctionAgeS = source.correctionAgeS;
+    sample.baseStationId = source.baseStationId;
+    return sample;
+}
+
+std::optional<double> steadyAgeMilliseconds(
+    const std::optional<std::chrono::steady_clock::time_point>& timestamp) {
+    if (!timestamp) return std::nullopt;
+    return std::chrono::duration<double, std::milli>(
+               std::chrono::steady_clock::now() - *timestamp)
+        .count();
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -482,48 +641,125 @@ int main(int argc, char* argv[]) {
     }
 
     const auto ports = findSerialPorts();
+    std::string gnssPortname;
+    if (options->gnssEnabled) {
+        gnssPortname = options->gnssPort == "auto"
+                           ? detectGnssPort(ports)
+                           : options->gnssPort;
+    }
+
     std::string portname;
     int fd = -1;
-    if (options->serialPort != "auto") {
-        portname = options->serialPort;
-        fd = setupSerial(portname);
+    if (options->espPort != "auto") {
+        portname = options->espPort;
+        if (!sameDevice(portname, gnssPortname)) fd = setupSerial(portname);
     } else {
-        for (const auto& candidate : ports) {
-            fd = setupSerial(candidate);
-            if (fd >= 0) {
-                portname = candidate;
-                break;
+        for (int preferred = 1; preferred >= 0 && fd < 0; --preferred) {
+            for (const auto& candidate : ports) {
+                if (sameDevice(candidate, gnssPortname) || isLikelyGnssPort(candidate)) {
+                    continue;
+                }
+                if (static_cast<int>(isLikelyEspPort(candidate)) != preferred) continue;
+                fd = setupSerial(candidate);
+                if (fd >= 0) {
+                    portname = candidate;
+                    break;
+                }
             }
         }
     }
-
     if (fd < 0) {
+        std::cerr << "No se pudo abrir un puerto ESP32 distinto del receptor GNSS.\n";
         printDetectedPorts(ports);
         return 1;
     }
 
-    GpsProcess gpsProcess;
-    GpsMatcher gpsMatcher;
-    bool gpsEnabled = !options->gpsScript.empty();
-    if (gpsEnabled) {
-        std::string gpsError;
-        if (!gpsProcess.start(options->gpsScript, options->gpsDevice, &gpsError)) {
-            std::cerr << "No se pudo iniciar GPS_CSG: " << gpsError
-                      << ". Continuando solo con DOBACK.\n";
-            gpsEnabled = false;
+    udp_gateway::UdpGateway udpGateway({
+        options->udpHost,
+        options->udpTelemetryPort,
+        options->udpCommandPort,
+        "0.0.0.0",
+    });
+    bool udpEnabled = options->udpEnabled;
+    if (udpEnabled) {
+        std::string udpError;
+        if (!udpGateway.open(&udpError)) {
+            std::cerr << "No se pudo iniciar UDP: " << udpError
+                      << ". Continuando solo con la terminal.\n";
+            udpEnabled = false;
         } else {
-            std::cerr << "GPS activo: " << options->gpsScript;
-            if (!options->gpsDevice.empty()) {
-                std::cerr << " --device-id " << options->gpsDevice;
-            }
-            std::cerr << '\n';
+            std::cerr << "UDP activo: telemetría a " << options->udpHost << ':'
+                      << options->udpTelemetryPort << ", comandos en :"
+                      << options->udpCommandPort << ".\n";
         }
     }
 
-    char buffer[1024];
+    GnssReceiver gnssReceiver;
+    GpsMatcher gpsMatcher;
+    std::string lastMatchedGnssTimestamp;
+    int gnssFd = -1;
+    std::vector<std::uint8_t> gnssWriteBuffer;
+    auto nextGnssReconnect = std::chrono::steady_clock::now();
+    auto connectGnss = [&]() {
+        if (!options->gnssEnabled || gnssFd >= 0 ||
+            std::chrono::steady_clock::now() < nextGnssReconnect) return;
+        if (options->gnssPort == "auto") {
+            gnssPortname = detectGnssPort(findSerialPorts());
+        }
+        if (gnssPortname.empty() || sameDevice(gnssPortname, portname)) {
+            nextGnssReconnect = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            return;
+        }
+        gnssFd = setupSerial(gnssPortname);
+        if (gnssFd < 0) {
+            nextGnssReconnect = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            return;
+        }
+        gnssWriteBuffer = gnssReceiver.buildStartupCommands();
+        std::cerr << "GNSS activo en " << gnssPortname << " (objetivo 5 Hz).\n";
+    };
+    connectGnss();
+
+    const char* ntripUserEnv = std::getenv("NTRIP_USERNAME");
+    const char* ntripPasswordEnv = std::getenv("NTRIP_PASSWORD");
+    NtripConfig ntripConfig;
+    ntripConfig.host = options->ntripHost;
+    ntripConfig.port = options->ntripPort;
+    ntripConfig.mountpoint = options->ntripMountpoint;
+    ntripConfig.username = ntripUserEnv ? ntripUserEnv : "";
+    ntripConfig.password = ntripPasswordEnv ? ntripPasswordEnv : "";
+    std::unique_ptr<NtripClient> ntripClient;
+    if (options->ntripEnabled) {
+        ntripClient = std::make_unique<NtripClient>(ntripConfig);
+        if (ntripConfig.username.empty() || ntripConfig.password.empty()) {
+            std::cerr << "NTRIP desactivado: define NTRIP_USERNAME y NTRIP_PASSWORD.\n";
+        } else {
+            std::string ntripError;
+            if (!ntripClient->start(&ntripError)) {
+                std::cerr << "No se pudo iniciar NTRIP: " << ntripError << '\n';
+            } else {
+                std::cerr << "NTRIP configurado: " << ntripConfig.host << ':'
+                          << ntripConfig.port << '/' << ntripConfig.mountpoint << ".\n";
+            }
+        }
+    }
+    auto ntripStatus = [&]() {
+        if (ntripClient) return ntripClient->status();
+        NtripStatus status;
+        status.host = options->ntripHost;
+        status.port = options->ntripPort;
+        status.mountpoint = options->ntripMountpoint;
+        return status;
+    };
+
+    udp_gateway::CalibrationState calibration;
+    udp_gateway::PhysicalConfig physicalConfig;
+    udp_gateway::PhysicsDerived physics;
+    bool physicsConfigured = false;
+    std::optional<udp_gateway::Orientation> latestRawOrientation;
+
+    char buffer[4096];
     std::string line;
-    // El puerto puede abrirse en mitad de una trama. Descartar hasta el primer
-    // salto de línea evita mostrar un registro inicial parcial o residual.
     bool discardingPartialLine = true;
     bool discardingOversizedLine = false;
     unsigned long lineCount = 0;
@@ -534,9 +770,88 @@ int main(int argc, char* argv[]) {
     std::vector<std::string> currentDisplayValues;
     std::optional<std::chrono::system_clock::time_point> currentDobackTimestamp;
     std::string updatedAt = "--:--:--";
+    auto lastEspData = std::chrono::steady_clock::now();
     Dashboard dashboard(portname);
-    dashboard.render(displayFields(fieldNames, gpsEnabled), currentDisplayValues,
-                     lineCount, idleSeconds, updatedAt);
+    dashboard.render(displayFields(fieldNames, options->gnssEnabled),
+                     currentDisplayValues, lineCount, idleSeconds, updatedAt);
+
+    auto processUdpCommands = [&]() {
+        if (!udpEnabled) return;
+        for (const auto& command : udpGateway.pollCommands()) {
+            if (command.type == udp_gateway::CommandType::Calibrate) {
+                if (!latestRawOrientation) {
+                    std::cerr << "Calibración ignorada: todavía no hay orientación DOBACK.\n";
+                    continue;
+                }
+                calibration.capture(*latestRawOrientation);
+                std::cerr << "Calibración aplicada a roll, pitch y yaw.\n";
+            } else if (command.type == udp_gateway::CommandType::Config) {
+                udp_gateway::PhysicsDerived candidate;
+                std::string error;
+                if (!udp_gateway::calculatePhysics(command.config, &candidate, &error)) {
+                    std::cerr << "Configuración física ignorada: " << error << '\n';
+                    continue;
+                }
+                physicalConfig = command.config;
+                physics = candidate;
+                physicsConfigured = true;
+            }
+        }
+    };
+
+    auto fillGnssTelemetry = [&](udp_gateway::TelemetryPacket& packet) {
+        const auto match = currentDobackTimestamp
+                               ? gpsMatcher.nearest(*currentDobackTimestamp,
+                                                    options->gpsMaximumDifference)
+                               : std::nullopt;
+        if (match) {
+            const auto& sample = match->sample;
+            packet.gps.available = true;
+            packet.gps.timestamp_utc = sample.timestampUtc;
+            packet.gps.delta_ms = static_cast<double>(match->deltaMilliseconds);
+            packet.gps.latitude_deg = sample.latitudeDeg;
+            packet.gps.longitude_deg = sample.longitudeDeg;
+            packet.gps.height_ellipsoid_m = sample.heightEllipsoidM;
+            packet.gps.height_msl_m = sample.heightMslM;
+            packet.gps.h_acc_m = sample.hAccM;
+            packet.gps.v_acc_m = sample.vAccM;
+            packet.gps.speed_m_s = sample.speedMS;
+            packet.gps.heading_deg = sample.headingDeg;
+            packet.gps.fix = sample.fix;
+            packet.gps.fix_type = sample.fixType;
+            packet.gps.rtk = sample.rtk;
+            packet.gps.num_sats = sample.numSats;
+            packet.gps.pdop = sample.pdop;
+            packet.gps.hdop = sample.hdop;
+            packet.gps.vdop = sample.vdop;
+            packet.gps.correction_age_s = sample.correctionAgeS;
+            packet.gps.base_station_id = sample.baseStationId;
+        }
+        const auto quality = gnssReceiver.snapshot();
+        const auto network = ntripStatus();
+        packet.gnss_status.device_connected = gnssFd >= 0;
+        packet.gnss_status.port = gnssPortname;
+        packet.gnss_status.solution_age_ms =
+            steadyAgeMilliseconds(quality.lastSolutionSteady);
+        packet.gnss_status.ntrip_state = ntripStateToString(network.state);
+        packet.gnss_status.ntrip_host = network.host;
+        packet.gnss_status.ntrip_port = network.port;
+        packet.gnss_status.ntrip_mountpoint = network.mountpoint;
+        packet.gnss_status.rtcm_age_ms = steadyAgeMilliseconds(network.lastRtcmSteady);
+        packet.gnss_status.rtcm_bytes = network.rtcmBytes;
+        packet.gnss_status.rtcm_messages = quality.rtcmMessages;
+        packet.gnss_status.rtcm_message_type = quality.lastRtcmMessageType;
+        packet.gnss_status.rtcm_used = quality.lastRtcmUsed;
+        packet.gnss_status.rtcm_crc_failed = quality.lastRtcmCrcFailed;
+        packet.gnss_status.reconnects = network.reconnects;
+        packet.gnss_status.last_error = !network.lastError.empty()
+                                                ? network.lastError
+                                                : quality.lastError;
+        if (!quality.interferenceState.empty()) {
+            packet.gnss_status.interference_state = quality.interferenceState;
+        }
+        packet.gnss_status.jam_ind = quality.jamInd;
+    };
 
     auto processSerialLine = [&](const std::string& completedLine) {
         const auto fields = splitFields(completedLine);
@@ -547,100 +862,159 @@ int main(int argc, char* argv[]) {
                 currentDisplayValues.clear();
                 currentDobackTimestamp.reset();
             }
-            dashboard.render(displayFields(fieldNames, gpsEnabled),
-                             currentDisplayValues, lineCount, idleSeconds,
-                             updatedAt);
             return;
         }
-
         if (!isMeasurement(fields, fieldNames)) {
             const auto* detectedSchema = knownSchemaFor(fields);
-            if (!detectedSchema) {
-                return;
-            }
+            if (!detectedSchema) return;
             fieldNames = *detectedSchema;
         }
 
         currentValues = fields;
         currentDobackTimestamp = std::chrono::system_clock::now();
-        currentDisplayValues = displayValues(
-            currentValues, currentDobackTimestamp, gpsMatcher,
-            options->gpsMaximumDifference, gpsEnabled);
+        latestRawOrientation = measurementOrientation(fieldNames, currentValues);
+        idleSeconds = 0;
+        lastEspData = std::chrono::steady_clock::now();
         updatedAt = currentTime();
         ++lineCount;
-        dashboard.render(displayFields(fieldNames, gpsEnabled),
-                         currentDisplayValues, lineCount, idleSeconds,
-                         updatedAt);
+        const auto network = ntripStatus();
+        currentDisplayValues = displayValues(
+            currentValues, currentDobackTimestamp, gpsMatcher,
+            options->gpsMaximumDifference, options->gnssEnabled, network);
+        dashboard.render(displayFields(fieldNames, options->gnssEnabled),
+                         currentDisplayValues, lineCount, idleSeconds, updatedAt);
+
+        if (udpEnabled) {
+            udp_gateway::TelemetryPacket packet;
+            packet.sequence = lineCount;
+            packet.doback_timestamp_utc = formatUtcTimestamp(*currentDobackTimestamp);
+            for (std::size_t index = 0;
+                 index < fieldNames.size() && index < currentValues.size(); ++index) {
+                packet.measurement.emplace_back(fieldNames[index], currentValues[index]);
+            }
+            if (latestRawOrientation) {
+                packet.raw_orientation = *latestRawOrientation;
+                packet.orientation = calibration.apply(*latestRawOrientation);
+            }
+            packet.calibration_active = calibration.active;
+            packet.config = physicalConfig;
+            packet.physics = physics;
+            packet.physics_configured = physicsConfigured;
+            fillGnssTelemetry(packet);
+            std::string udpError;
+            if (!udpGateway.sendTelemetry(packet, &udpError) && lineCount == 1) {
+                std::cerr << "No se pudo enviar telemetría UDP: " << udpError << '\n';
+            }
+        }
     };
 
     while (running) {
-        pollfd polls[2]{{fd, POLLIN, 0}, {-1, POLLIN, 0}};
-        nfds_t pollCount = 1;
-        if (gpsEnabled && gpsProcess.fileDescriptor() >= 0) {
-            polls[1].fd = gpsProcess.fileDescriptor();
-            pollCount = 2;
+        connectGnss();
+        if (gnssFd >= 0 && ntripClient) {
+            const auto rtcm = ntripClient->popRtcm(4096);
+            if (!rtcm.empty()) {
+                if (gnssWriteBuffer.size() + rtcm.size() > 65536) {
+                    gnssWriteBuffer.clear();
+                }
+                gnssWriteBuffer.insert(gnssWriteBuffer.end(), rtcm.begin(), rtcm.end());
+            }
+        }
+        if (gnssFd >= 0 && !gnssWriteBuffer.empty()) {
+            const ssize_t written = write(gnssFd, gnssWriteBuffer.data(),
+                                          gnssWriteBuffer.size());
+            if (written > 0) {
+                gnssWriteBuffer.erase(gnssWriteBuffer.begin(),
+                                      gnssWriteBuffer.begin() + written);
+            } else if (written < 0 && errno != EAGAIN && errno != EINTR) {
+                close(gnssFd);
+                gnssFd = -1;
+                gnssWriteBuffer.clear();
+                nextGnssReconnect = std::chrono::steady_clock::now() +
+                                    std::chrono::seconds(2);
+            }
         }
 
-        const int pollResult = poll(polls, pollCount, 1000);
+        pollfd polls[3]{{fd, POLLIN, 0}, {-1, POLLIN, 0}, {-1, POLLIN, 0}};
+        nfds_t pollCount = 1;
+        const nfds_t gnssIndex = pollCount;
+        if (gnssFd >= 0) polls[pollCount++] = {gnssFd, POLLIN, 0};
+        const int udpCommandFd = udpEnabled ? udpGateway.commandFileDescriptor() : -1;
+        const nfds_t udpIndex = pollCount;
+        if (udpCommandFd >= 0) polls[pollCount++] = {udpCommandFd, POLLIN, 0};
+
+        const int pollResult = poll(polls, pollCount, 200);
         if (pollResult < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
+            if (errno == EINTR) continue;
             dashboard.finish();
             std::cerr << "Error esperando datos: " << std::strerror(errno) << '\n';
             failed = true;
             break;
         }
+        idleSeconds = static_cast<unsigned int>(
+            std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::steady_clock::now() - lastEspData)
+                .count());
         if (pollResult == 0) {
-            ++idleSeconds;
             currentDisplayValues = displayValues(
                 currentValues, currentDobackTimestamp, gpsMatcher,
-                options->gpsMaximumDifference, gpsEnabled);
-            dashboard.render(displayFields(fieldNames, gpsEnabled),
-                             currentDisplayValues, lineCount, idleSeconds,
-                             updatedAt);
+                options->gpsMaximumDifference, options->gnssEnabled, ntripStatus());
+            dashboard.render(displayFields(fieldNames, options->gnssEnabled),
+                             currentDisplayValues, lineCount, idleSeconds, updatedAt);
             continue;
         }
 
-        if (gpsEnabled && pollCount == 2 && polls[1].revents) {
-            for (const auto& gpsLine : gpsProcess.readLines()) {
-                std::string parseError;
-                gpsMatcher.addJsonLine(gpsLine, &parseError);
+        if (gnssFd >= 0 && gnssIndex < pollCount && polls[gnssIndex].fd == gnssFd &&
+            (polls[gnssIndex].revents & (POLLERR | POLLHUP | POLLNVAL))) {
+            close(gnssFd);
+            gnssFd = -1;
+            gnssWriteBuffer.clear();
+            nextGnssReconnect = std::chrono::steady_clock::now() +
+                                std::chrono::seconds(2);
+        } else if (gnssFd >= 0 && gnssIndex < pollCount &&
+                   polls[gnssIndex].fd == gnssFd &&
+                   (polls[gnssIndex].revents & POLLIN)) {
+            const ssize_t count = read(gnssFd, buffer, sizeof(buffer));
+            if (count > 0) {
+                gnssReceiver.ingest(reinterpret_cast<std::uint8_t*>(buffer),
+                                    static_cast<std::size_t>(count));
+                if (const auto sample = gnssReceiver.latestSample()) {
+                    if (sample->timestampUtc != lastMatchedGnssTimestamp) {
+                        gpsMatcher.addSample(matcherSample(*sample));
+                        lastMatchedGnssTimestamp = sample->timestampUtc;
+                    }
+                }
+                if (ntripClient) {
+                    ntripClient->setGgaSentence(gnssReceiver.latestGgaSentence());
+                }
             }
-            if (!gpsProcess.running()) {
-                std::cerr << "El proceso GPS_CSG terminó. Continuando solo con DOBACK.\n";
-                gpsEnabled = false;
-            }
+        }
+        if (udpCommandFd >= 0 && udpIndex < pollCount &&
+            polls[udpIndex].fd == udpCommandFd && polls[udpIndex].revents) {
+            processUdpCommands();
         }
 
         if (polls[0].revents & (POLLERR | POLLHUP | POLLNVAL)) {
             dashboard.finish();
-            std::cerr << "El puerto serial se desconectó o dejó de estar disponible.\n";
+            std::cerr << "El puerto serial ESP32 se desconectó.\n";
             failed = true;
             break;
         }
-        if (!(polls[0].revents & POLLIN)) {
-            continue;
-        }
+        if (!(polls[0].revents & POLLIN)) continue;
 
         const ssize_t count = read(fd, buffer, sizeof(buffer));
         if (count < 0) {
-            if (errno == EAGAIN || errno == EINTR) {
-                continue;
-            }
+            if (errno == EAGAIN || errno == EINTR) continue;
             dashboard.finish();
-            std::cerr << "Error leyendo datos: " << std::strerror(errno) << '\n';
+            std::cerr << "Error leyendo datos ESP32: " << std::strerror(errno) << '\n';
             failed = true;
             break;
         }
-        idleSeconds = 0;
         for (ssize_t i = 0; i < count; ++i) {
             const char c = buffer[i];
             if (c == '\n') {
                 if (discardingPartialLine) {
                     discardingPartialLine = false;
-                    if (!line.empty() &&
-                        isMeasurementHeader(splitFields(line))) {
+                    if (!line.empty() && isMeasurementHeader(splitFields(line))) {
                         processSerialLine(line);
                     }
                 } else if (discardingOversizedLine) {
@@ -660,6 +1034,8 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    if (ntripClient) ntripClient->stop();
+    if (gnssFd >= 0) close(gnssFd);
     close(fd);
     dashboard.finish();
     std::cout << "Sesión finalizada. Muestras recibidas: " << lineCount << '\n';

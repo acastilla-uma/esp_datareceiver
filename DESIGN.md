@@ -2,8 +2,8 @@
 
 ## Source of truth
 - Status: Active
-- Last refreshed: 2026-09-29
-- Primary product surfaces: Live telemetry and historical CSV playback in the local dashboard.
+- Last refreshed: 2026-09-30
+- Primary product surfaces: Live telemetry, RTK/GNSS health, and historical CSV playback in the local dashboard.
 - Evidence reviewed: `windows_dashboard/static/index.html`, `app.js`, `app.css`, `server.py`.
 
 ## Brand
@@ -12,23 +12,23 @@
 - Avoid: Decorative charts that hide current values or silently mix live and historical data.
 
 ## Product goals
-- Goals: Show live stability and inspect a CSV sample-by-sample with the same calculations.
+- Goals: Show live stability, expose RTK precision/connectivity, and inspect a CSV sample-by-sample with the same calculations.
 - Non-goals: Editing the source CSV or uploading it to a remote service.
 - Success signals: A user can load a CSV, move backward/forward in time, and see every dashboard value update.
 
 ## Personas and jobs
 - Primary personas: Researcher or operator validating vehicle stability measurements.
-- User jobs: Compare sensor values and the stability equation at a precise recorded sample.
+- User jobs: Compare sensor values, RTK quality, and the stability equation at a precise recorded sample.
 - Key contexts of use: Local Windows browser, desktop first, occasional narrow viewport.
 
 ## Information architecture
 - Primary navigation: `En directo` and `Reproducir CSV` tabs.
 - Core views: Live dashboard, historical playback controls, shared telemetry/equation surface.
-- Content hierarchy: Mode/status -> sample controls -> sensor values -> stability terms -> supporting data.
+- Content hierarchy: Mode/status -> sample controls -> sensor values -> RTK/GNSS state -> stability terms -> supporting data.
 
 ## Design principles
 - Principle 1: Never mix live and historical samples without a visible mode indicator.
-- Principle 2: Reuse the live cards and units for historical playback.
+- Principle 2: Reuse the live cards and units for historical playback, including the RTK state reconstructed from CSV.
 - Tradeoffs: Browser-local parsing keeps user data private but does not persist the file after reload.
 
 ## Visual language
@@ -41,15 +41,15 @@
 
 ## Components
 - Existing components to reuse: Sensor cards, stability equation, `dl` metric lists, panel tokens.
-- New/changed components: Mode tabs, CSV picker, sample slider, previous/next/playback controls, historical status.
-- Variants and states: Empty, loaded, invalid CSV, first/last sample, playing, live.
+- New/changed components: Mode tabs, CSV picker, sample slider, previous/next/playback controls, historical status, structured GNSS/RTK panel.
+- Variants and states: Empty, loaded, invalid CSV, first/last sample, playing, live, RTK fixed, RTK float, autonomous, stale, disconnected.
 - Token/component ownership: `windows_dashboard/static/app.css`.
 
 ## Accessibility
 - Target standard: Semantic HTML and keyboard-operable controls.
 - Keyboard/focus behavior: Buttons, file picker and range slider are native controls.
 - Contrast/readability: Reuse existing color tokens and visible labels.
-- Screen-reader semantics: Tab buttons expose selected state; sample status is live text.
+- Screen-reader semantics: Tab buttons expose selected state; sample status is live text; GNSS sections use labelled headings and text status.
 - Reduced motion and sensory considerations: No essential motion or sound.
 
 ## Responsive behavior
@@ -68,14 +68,14 @@
 ## Content voice
 - Tone: Concise Spanish operational labels.
 - Terminology: `Muestra`, `Anterior`, `Siguiente`, `En directo`, `Reproducir CSV`.
-- Microcopy rules: Always show units and whether values are live or historical.
+- Microcopy rules: Always show units and whether values are live or historical; distinguish RTK solution quality from USB/NTRIP connectivity.
 
 ## Implementation constraints
 - Framework/styling system: Vanilla HTML/CSS/JavaScript; no new dependencies.
 - Design-token constraints: Extend existing `app.css` tokens.
 - Performance constraints: Parse locally and process one selected file at a time.
 - Compatibility constraints: Windows browsers supported by the existing dashboard.
-- Test/screenshot expectations: JavaScript syntax check, server tests, and visual smoke test with a CSV row.
+- Test/screenshot expectations: JavaScript syntax check, Node tests for CSV/GNSS reconstruction, server tests, and visual smoke test with a CSV row.
 
 ## Open questions
 - [ ] Should historical playback eventually support synchronized charts? Out of scope for this iteration.

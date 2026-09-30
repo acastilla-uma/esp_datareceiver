@@ -1,9 +1,12 @@
 import csv
 import json
 import math
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from server import (
     AppState,
@@ -75,6 +78,31 @@ class StorageTest(unittest.TestCase):
         self.assertAlmostEqual(row["calculated.gy_deg_s"], -16.49305)
         self.assertAlmostEqual(row["js.k1"], 1.15)
         self.assertIsNotNone(row["calculated.si_js"])
+
+    def test_flatten_telemetry_includes_gnss_status_columns(self):
+        telemetry = {
+            "sequence": 3,
+            "gps": {
+                "available": True,
+                "delta_ms": 200,
+                "fix": "RTK_FIXED",
+                "latitude_deg": 40.4168,
+                "longitude_deg": -3.7038,
+            },
+            "gnss_status": {
+                "device_connected": True,
+                "port": "/dev/serial/by-id/usb-u-blox",
+                "ntrip_state": "STREAMING",
+                "ntrip_host": "ergnss-tr.ign.es",
+                "ntrip_mountpoint": "VRS3M",
+                "rtcm_age_ms": 120,
+            },
+        }
+        row = flatten_telemetry(telemetry, compute_physics(50.0, 0.47, 0.25, 0.0))
+        self.assertTrue(row["gps.available"])
+        self.assertEqual(row["gps.delta_ms"], 200)
+        self.assertEqual(row["gnss_status.ntrip_state"], "STREAMING")
+        self.assertEqual(row["gnss_status.ntrip_mountpoint"], "VRS3M")
 
     def test_sanitize_measurement_name(self):
         self.assertEqual(sanitize_measurement_name("../Prueba 01:*"), "Prueba_01")

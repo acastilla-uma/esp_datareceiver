@@ -63,25 +63,48 @@ La placa ESP32 generalmente aparecerá como `/dev/ttyACM0` o `/dev/ttyUSB0`.
 ./build/esp32_receiver /dev/ttyUSB0
 ```
 
-El receptor inicia también `../GPS_CSG/gps_realtime.py`, añade a cada muestra
-DOBACK su timestamp UTC de recepción y selecciona la coordenada GPS cuyo campo
-`ts` sea el más cercano. La tolerancia predeterminada es de 10 segundos.
+El receptor lee directamente el simpleRTK2B/ZED-F9P por un segundo puerto USB.
+Configura una frecuencia objetivo de 5 Hz y asocia a cada medida DOBACK la
+solución GNSS temporalmente más cercana. La asociación solo es válida cuando
+`|timestamp_DOBACK - timestamp_GNSS| <= 200 ms`.
 
 ```bash
-# Filtrar un dispositivo GPS y ajustar la tolerancia a 5 segundos
-./build/esp32_receiver auto --gps-device GPSTEST001 --gps-max-delta-ms 5000
+# Puertos explícitos si la autodetección no dispone de nombres estables
+./build/esp32_receiver --esp-port /dev/ttyUSB0 --gnss-port /dev/ttyACM0
 
-# Ejecutar temporalmente sin GPS
-./build/esp32_receiver auto --no-gps
+# Ejecutar temporalmente sin GNSS o sin correcciones
+./build/esp32_receiver auto --no-gnss
+./build/esp32_receiver auto --no-ntrip
 ```
 
-Si `GPS_CSG` está en otra ubicación, usa `--gps-script RUTA`. El panel muestra
-`doback_timestamp_utc`, `gps_timestamp_utc`, la diferencia en milisegundos,
-latitud, longitud, tipo de fix y número de satélites.
+Para usar el servicio gratuito SPTR del IGN, registra una cuenta y exporta las
+credenciales antes de arrancar. No se imprimen ni se envían al dashboard:
 
-El receptor busca primero `/dev/serial/by-id/*` (nombre estable) y después
-`/dev/ttyACM*` y `/dev/ttyUSB*`. Si pasan cinco segundos sin datos, muestra una
-advertencia sin cerrar la captura.
+```bash
+export NTRIP_USERNAME='usuario_ign'
+export NTRIP_PASSWORD='contraseña_ign'
+./run_auto.sh
+```
+
+Como alternativa, copia `ntrip.env.example` a `ntrip.env`, sustituye los
+valores, protégelo con `chmod 600 ntrip.env` y carga la sesión con
+`source ntrip.env`. El archivo real está excluido de Git.
+
+La configuración predeterminada usa `ergnss-tr.ign.es:2101/VRS3M`. Puede
+ajustarse con `--ntrip-host`, `--ntrip-port` y `--ntrip-mountpoint`. La Jetson
+envía GGA al caster, recibe RTCM y lo introduce al receptor por el mismo USB.
+El diagnóstico informa además del tipo RTCM, validación CRC y si el ZED-F9P
+indicó que utilizó la última corrección.
+
+No es necesario compartir Internet directamente con la placa: el cliente NTRIP
+se ejecuta en la Jetson, usa la ruta de Internet que ya proporciona el router
+móvil y reenvía las correcciones a la simpleRTK2B por USB.
+
+El receptor busca primero `/dev/serial/by-id/*`. Identifica como GNSS los nombres
+que contienen u-blox, ZED-F9P o ArduSimple y excluye ese dispositivo al elegir el
+ESP32. Si el nombre USB no permite distinguirlos, indica ambos puertos mediante
+la CLI. Una pérdida de GNSS/NTRIP no detiene la estabilidad; el estado se marca
+como degradado y la reconexión GNSS es automática.
 
 ## Comprobación física y del firmware
 

@@ -1,8 +1,10 @@
 {
-  "session_id": "01a0ec89-7c44-7a21-83e7-595664e585da",
-  "native_session_id": "01a0ec89-7c44-7a21-83e7-595664e585da",
-  "started_at": "2026-09-30T13:41:57.516Z",
-  "cwd": "C:\\Users\\alexc\\Nextcloud\\phd-AlexCastilla\\code\\esp32_data_receiver",
-  "pid": 6292,
-  "platform": "win32"
+  "session_id": "01a0f299-683f-7de1-9138-f2e43f11dc6b",
+  "native_session_id": "01a0f299-683f-7de1-9138-f2e43f11dc6b",
+  "started_at": "2026-09-30T13:55:40.631Z",
+  "cwd": "/home/agilex/Documents/PhDAlex/esp_datareceiver",
+  "pid": 10069,
+  "platform": "linux",
+  "pid_start_ticks": 85999,
+  "pid_cmdline": "/home/agilex/.local/share/node-v20.20.2-omx-patched/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/bin/codex -c features.code_mode_host=true app-server --listen unix://"
 }

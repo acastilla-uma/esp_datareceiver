@@ -309,7 +309,7 @@ def flatten_telemetry(telemetry, js_physics=None):
         "sequence": telemetry.get("sequence"),
         "doback_timestamp_utc": telemetry.get("doback_timestamp_utc"),
     }
-    for section in ("orientation", "measurement", "gps", "physics"):
+    for section in ("orientation", "measurement", "gps", "gnss_status", "physics"):
         value = telemetry.get(section)
         if isinstance(value, dict):
             for key, item in value.items():
@@ -362,6 +362,10 @@ def make_handler(state, static_dir):
             elif parsed.path == "/app.js":
                 self.send_static(
                     static_dir / "app.js", "application/javascript; charset=utf-8"
+                )
+            elif parsed.path == "/app_core.js":
+                self.send_static(
+                    static_dir / "app_core.js", "application/javascript; charset=utf-8"
                 )
             elif parsed.path == "/api/state":
                 self.send_json(state.snapshot())

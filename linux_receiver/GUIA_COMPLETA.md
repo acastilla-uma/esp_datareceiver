@@ -2,15 +2,18 @@
 
 ## Resumen
 
-El receptor Linux lee las líneas que envía la placa ESP32 por USB-C y las
-muestra en la terminal. No crea archivos CSV ni guarda datos al detenerse.
+El receptor Linux lee las líneas del ESP32 y el simpleRTK2B por puertos USB
+separados. Muestra estabilidad y estado RTK en la terminal y envía la telemetría
+por UDP al dashboard, que puede guardarla en CSV.
 
 ```text
 [Placa ESP32]
       ↓ USB-C (Serial 115200 baud)
 [Programa C++ en Linux]
-      ↓
-[Terminal]
+      ← USB → [simpleRTK2B / ZED-F9P]
+      ← Internet/NTRIP → [IGN VRS3M]
+      ↓ UDP
+[Terminal + dashboard Windows]
 ```
 
 ## Compilar el receptor
@@ -71,6 +74,14 @@ Puerto indicado manualmente:
 
 ```bash
 ./build/esp32_receiver /dev/ttyUSB0
+```
+
+Con ambos puertos indicados:
+
+```bash
+export NTRIP_USERNAME='usuario_ign'
+export NTRIP_PASSWORD='contraseña_ign'
+./build/esp32_receiver --esp-port /dev/ttyUSB0 --gnss-port /dev/ttyACM0
 ```
 
 Salida esperada:

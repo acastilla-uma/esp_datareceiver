@@ -6,16 +6,18 @@
 
 namespace {
 
-void parsesRealGpsShape() {
-    const auto sample = parseGpsJsonLine(
-        R"({"id":14125,"device_id":"GPSTEST001","ts":"2026-09-11 06:12:44+00:00","lat":38.0468168,"lon":-4.0429863,"alt":286.43,"hdop":99.99,"fix_type":2,"num_sats":7,"speed_kmh":0.0,"received_at":"2026-09-11 06:12:46.754421+00:00"})");
-    assert(sample);
-    assert(sample->deviceId == "GPSTEST001");
-    assert(sample->latitude == 38.0468168);
-    assert(sample->longitude == -4.0429863);
-    assert(sample->fixType == 2);
-    assert(sample->satellites == 7);
-    assert(sample->timestampUtc == "2026-09-11T06:12:44.000000Z");
+GpsSample sampleAt(const std::string& timestamp, double latitude) {
+    const auto parsed = parseUtcTimestamp(timestamp);
+    assert(parsed);
+    GpsSample sample;
+    sample.timestamp = *parsed;
+    sample.timestampUtc = formatUtcTimestamp(*parsed);
+    sample.latitudeDeg = latitude;
+    sample.longitudeDeg = -4.0;
+    sample.fix = "RTK_FIXED";
+    sample.rtk = "FIXED";
+    sample.numSats = 24;
+    return sample;
 }
 
 void handlesTimezoneOffsets() {
@@ -26,35 +28,55 @@ void handlesTimezoneOffsets() {
 
 void choosesNearestWithinTolerance() {
     GpsMatcher matcher;
-    assert(matcher.addJsonLine(
-        R"({"device_id":"gps","ts":"2026-09-11 06:12:44+00:00","lat":38.0,"lon":-4.0,"fix_type":1,"num_sats":5})"));
-    assert(matcher.addJsonLine(
-        R"({"device_id":"gps","ts":"2026-09-11 06:12:48+00:00","lat":39.0,"lon":-5.0,"fix_type":1,"num_sats":6})"));
+    matcher.addSample(sampleAt("2026-09-11T06:12:44.000000Z", 38.0));
+    matcher.addSample(sampleAt("2026-09-11T06:12:48.000000Z", 39.0));
 
-    const auto doback = parseUtcTimestamp("2026-09-11 06:12:47.250+00:00");
+    const auto doback = parseUtcTimestamp("2026-09-11T06:12:47.250000Z");
     assert(doback);
     const auto match = matcher.nearest(*doback, std::chrono::milliseconds(2000));
     assert(match);
-    assert(match->sample.latitude == 39.0);
+    assert(match->sample.latitudeDeg == 39.0);
     assert(match->deltaMilliseconds == -750);
     assert(!matcher.nearest(*doback, std::chrono::milliseconds(500)));
 }
 
-void rejectsInvalidInput() {
-    std::string error;
-    assert(!parseGpsJsonLine(
-        R"({"ts":"not-a-date","lat":38.0,"lon":-4.0})", &error));
-    assert(!error.empty());
-    assert(!parseGpsJsonLine(
-        R"({"ts":"2026-09-11 06:12:44+00:00","lat":138.0,"lon":-4.0})"));
+void acceptsInclusiveTwoHundredMillisecondWindow() {
+    GpsMatcher matcher;
+    matcher.addSample(sampleAt("2026-09-11T06:12:44.000000Z", 38.0));
+
+    const auto before = parseUtcTimestamp("2026-09-11T06:12:43.800000Z");
+    const auto same = parseUtcTimestamp("2026-09-11T06:12:44.000000Z");
+    const auto after = parseUtcTimestamp("2026-09-11T06:12:44.200000Z");
+    const auto tooEarly = parseUtcTimestamp("2026-09-11T06:12:43.799000Z");
+    const auto tooLate = parseUtcTimestamp("2026-09-11T06:12:44.201000Z");
+    assert(before && same && after && tooEarly && tooLate);
+
+    assert(matcher.nearest(*before, std::chrono::milliseconds(200))->deltaMilliseconds == -200);
+    assert(matcher.nearest(*same, std::chrono::milliseconds(200))->deltaMilliseconds == 0);
+    assert(matcher.nearest(*after, std::chrono::milliseconds(200))->deltaMilliseconds == 200);
+    assert(!matcher.nearest(*tooEarly, std::chrono::milliseconds(200)));
+    assert(!matcher.nearest(*tooLate, std::chrono::milliseconds(200)));
+}
+
+void reusesOneGnssSampleAndBoundsHistory() {
+    GpsMatcher matcher(1);
+    matcher.addSample(sampleAt("2026-09-11T06:12:44.000000Z", 38.0));
+    const auto first = parseUtcTimestamp("2026-09-11T06:12:44.050000Z");
+    const auto second = parseUtcTimestamp("2026-09-11T06:12:44.150000Z");
+    assert(first && second);
+    assert(matcher.nearest(*first, std::chrono::milliseconds(200)));
+    assert(matcher.nearest(*second, std::chrono::milliseconds(200)));
+
+    matcher.addSample(sampleAt("2026-09-11T06:12:45.000000Z", 39.0));
+    assert(matcher.size() == 1);
 }
 
 }  // namespace
 
 int main() {
-    parsesRealGpsShape();
     handlesTimezoneOffsets();
     choosesNearestWithinTolerance();
-    rejectsInvalidInput();
+    acceptsInclusiveTwoHundredMillisecondWindow();
+    reusesOneGnssSampleAndBoundsHistory();
     std::cout << "gps_matcher_tests: OK\n";
 }
